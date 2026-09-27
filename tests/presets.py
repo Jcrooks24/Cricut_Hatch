@@ -99,6 +99,7 @@ PRESETS: Dict[str, HatchConfig] = {
         line_shade_levels=4,
         line_shade_hi=0.60,
         line_shade_lo=0.06,
+        max_pen_lifts=500,         # Cricut-friendly: trace protected, shading trimmed
     ),
 }
 

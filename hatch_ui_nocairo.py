@@ -356,9 +356,15 @@ class HatchConfig:
     line_smooth_px: float      = 1.0      # blur edge map before thresholding
     line_min_len_px: float     = 9.0      # drop polylines shorter than this (noise)
     line_simplify_px: float    = 1.0      # Douglas-Peucker tolerance
-    line_stitch_jump_px: float = 6.0      # chain endpoints within this = pen stays down
+    line_stitch_jump_px: float = 2.0      # only rejoin skeleton fragments this close
+                                          # (larger draws travel lines between
+                                          # unrelated contours -> a "web")
     line_subpaths_per_path: int = 1500    # pack this many strokes into one <path>
     line_max_paths: int        = 4500
+    # Cricut struggles with many pen lifts (each M = a lift). Cap the total;
+    # least-efficient strokes (fewest drawn segments per lift) are dropped first.
+    # 0 = disabled.
+    max_pen_lifts: int         = 0
     # Shading (secondary): graduated crosshatch UNDER the contour lines.
     # Multiple tone levels from line_shade_hi (lightest shaded) down to
     # line_shade_lo (darkest); each level hatches at a different angle, so
@@ -1316,6 +1322,12 @@ def run_line_art(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             if remaining <= 0:
                 break
             mask = arr_s < float(th)
+            # Clear the 1px border so regions touching the image edge (e.g. a
+            # dark background) close into valid polygons instead of being
+            # dropped by find_contours — otherwise the darkest areas get no
+            # shading and the image looks tonally inverted.
+            mask[0, :] = mask[-1, :] = False
+            mask[:, 0] = mask[:, -1] = False
             if mask.sum() == 0:
                 continue
             angle = float(cfg.line_shade_angle) + 45.0 * li   # distinct per level
@@ -1329,6 +1341,36 @@ def run_line_art(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             shade_d.extend(d)
             remaining -= len(d)
             if log: log(f"Shade L{li+1} tone<{th:.2f} ang={angle:.0f}: +{len(d)} paths")
+
+    # Enforce a pen-lift budget (Cricut struggles with many lifts). Protect the
+    # contour trace (it carries recognizability); spend the remaining budget on
+    # shading, dropping the least-efficient shading strokes (fewest drawn
+    # segments per lift) first.
+    if cfg.max_pen_lifts and cfg.max_pen_lifts > 0:
+        cap = int(cfg.max_pen_lifts)
+        def _lifts(d): return d.count("M ")
+        def _eff(d):   return d.count("L ") / max(1, d.count("M "))
+
+        def _trim(dstrings, budget):
+            total = sum(_lifts(d) for d in dstrings)
+            if total <= budget:
+                return dstrings
+            keep = [True] * len(dstrings)
+            for i in sorted(range(len(dstrings)), key=lambda k: _eff(dstrings[k])):
+                if total <= budget:
+                    break
+                total -= _lifts(dstrings[i])
+                keep[i] = False
+            return [d for i, d in enumerate(dstrings) if keep[i]]
+
+        line_lifts = sum(_lifts(d) for d in line_d)
+        if line_lifts >= cap:
+            line_d = _trim(line_d, cap)   # trace alone over budget
+            shade_d = []
+        else:
+            shade_d = _trim(shade_d, cap - line_lifts)
+        if log: log(f"Pen-lift cap {cap}: trace={sum(_lifts(d) for d in line_d)} "
+                    f"shade={sum(_lifts(d) for d in shade_d)}")
 
     all_d = shade_d + line_d          # shading first, contours on top
     if not all_d:
