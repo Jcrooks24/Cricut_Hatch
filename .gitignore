@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Generated run artifacts — heavy + regenerable. The valuable feedback
+# (grades.jsonl, baseline.json) is tracked explicitly below.
+results/runs/
+
+# HED model weights (downloaded on demand, large)
+*.caffemodel
+*.prototxt
+.hatch_models/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Keep tracked feedback even though results/runs is ignored
+!results/grades.jsonl
+!results/baseline.json

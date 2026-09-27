@@ -1,0 +1,13 @@
+# Core pipeline
+pillow
+numpy
+shapely
+svgwrite
+scikit-image
+
+# Desktop GUI (the interactive app)
+dearpygui
+
+# Optional: HED deep-learning edge detection. Without it the pipeline falls
+# back to a gradient edge metric automatically.
+opencv-python
