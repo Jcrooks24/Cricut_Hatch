@@ -398,7 +398,11 @@ class HatchConfig:
     # join_mult * spacing connect pen-DOWN (short travel line); farther jumps
     # lift the pen. Larger = fewer lifts but more visible travel moves.
     tonal_greedy_stitch: bool  = True
-    tonal_join_mult: float     = 1.6
+    tonal_join_mult: float     = 1.6    # used only when tonal_hide_travel is off
+    # Hidden-travel stitching: keep the pen DOWN whenever a travel move stays
+    # inside the hatched region (invisible), lift only when it would cross a
+    # light area. Aggressively minimises pen lifts with no visible connectors.
+    tonal_hide_travel: bool    = True
 
     # SVG stroke
     stroke_width: float    = 0.55
@@ -757,16 +761,36 @@ def clip_lines_to_polygon(lines: List[LineString], poly: Polygon) -> List[LineSt
                 pass
     return segs
 
-def stitch_segs_greedy(segs: List[LineString], join_jump: float) -> str:
+def _travel_hidden(x0: float, y0: float, x1: float, y1: float,
+                   mask: np.ndarray, samples: int = 6) -> bool:
+    """True if the INTERIOR of the segment (x0,y0)->(x1,y1) stays inside the dark
+    mask — a pen-down travel there runs through hatched area and is invisible.
+    Endpoints are skipped: they sit on the clipped region boundary and would
+    false-negative."""
+    h, w = mask.shape
+    for t in np.linspace(0.15, 0.85, samples):
+        x = int(round(x0 + (x1 - x0) * t))
+        y = int(round(y0 + (y1 - y0) * t))
+        if not (0 <= x < w and 0 <= y < h) or not mask[y, x]:
+            return False
+    return True
+
+
+def stitch_segs_greedy(segs: List[LineString], join_jump: float,
+                       mask: Optional[np.ndarray] = None) -> str:
     """
     Stitch many hatch segments into ONE d-string via a greedy nearest-neighbour
-    tour: always travel to the closest unused segment. Adjacent segments (incl.
-    across region gaps <= join_jump) connect pen-DOWN; larger jumps lift the pen.
+    tour: always travel to the closest unused segment.
 
-    Unlike a perpendicular sort — which interleaves segments on opposite sides of
-    a hole and lifts at every crossing — a NN tour finishes one region before
-    jumping, so the pen-lift count drops sharply. Falls back to the boustrophedon
-    stitcher if scipy is unavailable.
+    Pen-down vs pen-up per jump:
+      - with `mask` (the layer's dark region): pen stays DOWN whenever the travel
+        runs through hatched area (invisible) and only LIFTS when it would cross a
+        light/unhatched area — minimises lifts with no visible connectors.
+      - without `mask`: pen-down for jumps <= join_jump, else lift.
+
+    A NN tour finishes one region before jumping, so lifts drop sharply vs a
+    perpendicular sort. Falls back to the boustrophedon stitcher if scipy is
+    unavailable.
     """
     if not segs:
         return ""
@@ -815,7 +839,11 @@ def stitch_segs_greedy(segs: List[LineString], join_jump: float) -> str:
         seg, which, d = found
         a = ends[2 * seg + which]
         b = ends[2 * seg + (1 - which)]
-        parts.append(f"{'L' if d <= join_jump else 'M'} {a[0]:.2f},{a[1]:.2f}")
+        # Short jumps (normal boustrophedon turns) are always pen-down; longer
+        # jumps stay down only if the travel is hidden inside the dark region.
+        pen_down = (d <= join_jump) or (
+            mask is not None and _travel_hidden(cur_end[0], cur_end[1], a[0], a[1], mask))
+        parts.append(f"{'L' if pen_down else 'M'} {a[0]:.2f},{a[1]:.2f}")
         parts.append(f"L {b[0]:.2f},{b[1]:.2f}")
         used[seg] = True
         cur_end = b
@@ -1537,7 +1565,9 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             continue
         # step 5: 1 layer = 1 path, greedy NN tour to minimise pen lifts
         if cfg.tonal_greedy_stitch:
-            d = stitch_segs_greedy(segs, spacing * float(cfg.tonal_join_mult))
+            d = stitch_segs_greedy(
+                segs, spacing * float(cfg.tonal_join_mult),
+                mask=mask if cfg.tonal_hide_travel else None)
         else:
             d = stitch_segs_to_d_string(segs, spacing * 1.4)
         if d:
