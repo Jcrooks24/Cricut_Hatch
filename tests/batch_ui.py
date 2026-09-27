@@ -25,6 +25,8 @@ import queue
 import threading
 import traceback
 
+from dataclasses import replace
+
 import dearpygui.dearpygui as dpg
 from PIL import Image
 
@@ -68,11 +70,12 @@ class BatchTester:
         self.running = False
 
     # ── batch generation (worker thread) ─────────────────────────────────────
-    def start(self, preset_names, image_paths):
+    def start(self, preset_names, image_paths, pen_lift_cap=0):
         if self.running:
             return
         self.running = True
         self.results = []
+        self.pen_lift_cap = pen_lift_cap
         self.run_label = f"batch_{H.now_stamp()}"
         t = threading.Thread(target=self._run, args=(preset_names, image_paths),
                              daemon=True)
@@ -85,6 +88,9 @@ class BatchTester:
         done = 0
         for preset_name in preset_names:
             cfg = P.get(preset_name)
+            # Live override of the pen-lift cap from the cockpit (0 = use preset).
+            if getattr(self, "pen_lift_cap", 0) > 0:
+                cfg = replace(cfg, max_pen_lifts=int(self.pen_lift_cap))
             for img_path in image_paths:
                 key = H.image_key(img_path)
                 stem = f"{key}__{preset_name}"
@@ -224,8 +230,10 @@ class BatchApp:
         self.textures.clear()
         dpg.set_value("progress", 0.0)
         dpg.configure_item("btn_run", enabled=False)
-        dpg.set_value("status", f"Running {len(images)}x{len(presets)} ...")
-        self.bt.start(presets, images)
+        cap = int(dpg.get_value("pen_lift_cap") or 0)
+        dpg.set_value("status", f"Running {len(images)}x{len(presets)} "
+                                f"(pen-lift cap {cap or 'preset'}) ...")
+        self.bt.start(presets, images, pen_lift_cap=cap)
 
     def on_save(self):
         graded = self.bt.collect_grades(dpg.get_value)
@@ -350,6 +358,12 @@ class BatchApp:
                     k = H.image_key(p)
                     dpg.add_checkbox(label=k, tag=f"image_{k}", default_value=True)
 
+            with dpg.group(horizontal=True):
+                dpg.add_input_int(label="Max pen lifts (0 = use preset)",
+                                  tag="pen_lift_cap", default_value=0,
+                                  min_value=0, step=100, width=160)
+                dpg.add_text("Cricut struggles with many lifts; try 500/1000/2000.",
+                             color=(150, 150, 150))
             with dpg.group(horizontal=True):
                 dpg.add_button(label="RUN BATCH", tag="btn_run", callback=self.on_run,
                                width=140, height=32)

@@ -95,11 +95,12 @@ PRESETS: Dict[str, HatchConfig] = {
         line_despur_px=12.0,       # prune dead-end fuzz
         line_min_len_px=14.0,
         line_smooth_px=0.8,
-        line_shade=True,           # graduated crosshatch shading (4 levels)
-        line_shade_levels=4,
-        line_shade_hi=0.60,
-        line_shade_lo=0.06,
-        max_pen_lifts=500,         # Cricut-friendly: trace protected, shading trimmed
+        line_shade=True,           # graduated crosshatch shading
+        line_shade_levels=3,       # max 3 overlapping passes -> dark, not solid
+        line_shade_hi=0.58,
+        line_shade_lo=0.10,
+        line_shade_spacing_px=6.0, # a touch wider so 3 passes stays readable
+        max_pen_lifts=1000,        # override live in the cockpit per your Cricut
     ),
 }
 
