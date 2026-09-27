@@ -17,11 +17,18 @@ on two kinds of signal:
    - `svg_kb` — file size; large files also crash Design Space.
    - `elapsed_sec` — keep generation practical.
 
-2. **Human grades** (1-5), because "looks good" is the real target:
-   - `tone` — do light/dark regions match the photo?
-   - `detail` — is meaningful detail preserved (eyes, texture, edges)?
-   - `clean` — free of artifacts (band seams, moire, noise, stray marks)?
-   - `overall` — headline score; this is what regression detection tracks.
+2. **Human grades** (1-5), because "looks good" is the real target. Squint at
+   the preview — a good pen-and-ink conversion reads as the photo squinted.
+
+   | axis | question | 1 | 5 |
+   |---|---|---|---|
+   | `tone` | Does the value structure match the photo? Full range from paper-white highlights to dense-black shadows? | flat / muddy / inverted | proper value study |
+   | `detail` | Are the subject's defining features legible (eyes, edges, silhouette, texture)? | can't identify the subject | clearly readable |
+   | `clean` | Free of artifacts — band staircases, moiré, scan-line streaks in flat areas, stray marks; light areas left white? | noisy / streaky | clean pen-and-ink |
+   | `overall` | Would you run it on the plotter? Headline score; this is what regression detection tracks. | scrap | ship it |
+
+   Leave a slider at 0 to skip an axis. `overall` is the one that gates
+   promotion, so always set it.
 
 A change is only accepted when it wins — or at least doesn't lose — across
 **all** images. `compare.py` flags any image whose overall grade dropped or

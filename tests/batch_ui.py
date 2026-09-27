@@ -36,6 +36,19 @@ from hatch_ui_nocairo import hatch_pipeline
 AXES = ["tone", "detail", "clean", "overall"]
 THUMB_MAX = 320
 
+# Shown in the UI and written into methodology.md. Squint at the preview.
+GRADE_RUBRIC = [
+    "tone   - Value structure matches the photo? Squint: do light/dark areas land",
+    "         where they should, with a full range from paper-white highlights to",
+    "         dense-black shadows?  1=flat/muddy/inverted  5=proper value study",
+    "detail - Are the subject's defining features legible (eyes, edges, silhouette,",
+    "         texture)?  1=can't identify the subject  5=clearly readable",
+    "clean  - Free of artifacts: no band staircases, moire, scan-line streaks in",
+    "         flat areas, stray marks; light areas left white.  1=noisy  5=clean",
+    "overall- Would you run it on the plotter?  1=scrap  5=ship it",
+    "(Leave a slider at 0 to skip that axis.)",
+]
+
 
 def _make_thumb(preview_path: str, thumb_path: str):
     try:
@@ -322,6 +335,9 @@ class BatchApp:
     def _build(self):
         with dpg.window(tag="main"):
             dpg.add_text("Batch Test Cockpit — Run -> Grade -> Export", color=(120, 200, 255))
+            with dpg.collapsing_header(label="Grading criteria (1 = bad, 5 = excellent)"):
+                for line in GRADE_RUBRIC:
+                    dpg.add_text(line, wrap=1100)
             with dpg.collapsing_header(label="1. Select presets", default_open=True):
                 for n in sorted(P.PRESETS):
                     dpg.add_checkbox(label=n, tag=f"preset_{n}",

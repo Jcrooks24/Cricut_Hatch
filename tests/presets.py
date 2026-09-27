@@ -58,6 +58,29 @@ PRESETS: Dict[str, HatchConfig] = {
         band_cap=400,
         micro_enabled=False,
     ),
+
+    # First improvement pass (config-only) targeting the confirmed baseline
+    # failures on the portrait tests:
+    #   - light backgrounds filled with scan-line streaks -> leave them white
+    #     by lowering the highlight-protect threshold (baseline 0.92 protected 0%).
+    #   - dark tones collapsing/muddy -> lift shadows with band_gamma < 1.
+    #   - subject unreadable -> crisper local contrast + a stronger edge layer
+    #     so silhouettes/features carry the drawing.
+    "readable_v2": replace(
+        BASELINE,
+        highlight_protect_thr=0.80,   # leave light areas as clean paper
+        band_gamma=0.90,              # lift shadows so darks separate, not blob
+        local_contrast_radius=10.0,   # finer detail
+        local_contrast_strength=0.75,
+        base_spacing_px=8.0,          # slightly denser tone overall
+        detail_pct=82.0,              # more of the edge map becomes ink
+        detail_budget=1600,
+        detail_spacing_mult=0.40,
+        darkedge_pct=85.0,
+        darkedge_budget=550,
+        lightedge_pct=88.0,
+        lightedge_budget=650,
+    ),
 }
 
 
