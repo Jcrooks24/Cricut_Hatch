@@ -1,10 +1,18 @@
 # Cricut_Hatch
 
 Converts a photo into a **pen-and-ink hatched SVG** tuned for a Cricut pen
-plotter. The image is split into tone bands, each band filled with single-line
-hatching (crosshatch in the darks) plus edge/detail aux layers. The controlling
-design constraint: **1 polygon = 1 SVG path = 1 pen lift**, hard-capped at
-**5000 paths**, because large / many-path files crash Cricut Design Space.
+plotter, keeping the path/pen-lift count low because large files crash Cricut
+Design Space.
+
+**Recommended mode: `tonal`** — clean cross-hatch engraving-style rendering.
+Polygonize tonal regions → darkness sets how many overlapping angled layers a
+region gets → each layer is stitched into ONE path with a greedy
+nearest-neighbour tour (few pen lifts) → each layer uses a different angle so
+passes don't overlap. Produces the most recognizable output in just a handful of
+paths. See `run_tonal` in `hatch_ui_nocairo.py` and the `tonal` preset.
+
+Other modes: `line_art` (HED edge contours + shading) and the original tone-band
+`baseline` (kept for reference / A-B).
 
 The interactive app is `hatch_ui_nocairo.py` (DearPyGui). The same pipeline is
 callable headlessly via `hatch_pipeline(png, out_svg, cfg)`, which is what the

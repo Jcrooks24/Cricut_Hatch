@@ -394,6 +394,11 @@ class HatchConfig:
     tonal_angle_step: float    = 40.0   # angle offset per layer (step 6)
     tonal_blur_px: float       = 2.0
     tonal_min_area_px2: float  = 30.0
+    # Greedy nearest-neighbour stitching to cut pen lifts. Segments within
+    # join_mult * spacing connect pen-DOWN (short travel line); farther jumps
+    # lift the pen. Larger = fewer lifts but more visible travel moves.
+    tonal_greedy_stitch: bool  = True
+    tonal_join_mult: float     = 1.6
 
     # SVG stroke
     stroke_width: float    = 0.55
@@ -751,6 +756,73 @@ def clip_lines_to_polygon(lines: List[LineString], poly: Polygon) -> List[LineSt
             except Exception:
                 pass
     return segs
+
+def stitch_segs_greedy(segs: List[LineString], join_jump: float) -> str:
+    """
+    Stitch many hatch segments into ONE d-string via a greedy nearest-neighbour
+    tour: always travel to the closest unused segment. Adjacent segments (incl.
+    across region gaps <= join_jump) connect pen-DOWN; larger jumps lift the pen.
+
+    Unlike a perpendicular sort — which interleaves segments on opposite sides of
+    a hole and lifts at every crossing — a NN tour finishes one region before
+    jumping, so the pen-lift count drops sharply. Falls back to the boustrophedon
+    stitcher if scipy is unavailable.
+    """
+    if not segs:
+        return ""
+    try:
+        from scipy.spatial import cKDTree
+    except Exception:
+        return stitch_segs_to_d_string(segs, join_jump)
+
+    n = len(segs)
+    if n == 1:
+        c = list(segs[0].coords)
+        return "M " + " L ".join(f"{x:.2f},{y:.2f}" for x, y in c)
+
+    # endpoint 0 and 1 of every segment; row 2*i and 2*i+1
+    ends = np.array([[s.coords[0], s.coords[-1]] for s in segs],
+                    dtype=float).reshape(2 * n, 2)
+    tree = cKDTree(ends)
+    used = np.zeros(n, dtype=bool)
+
+    parts: List[str] = []
+    cur = 0
+    a, b = ends[2 * cur], ends[2 * cur + 1]
+    parts.append(f"M {a[0]:.2f},{a[1]:.2f}")
+    parts.append(f"L {b[0]:.2f},{b[1]:.2f}")
+    used[cur] = True
+    cur_end = b
+    remaining = n - 1
+
+    while remaining > 0:
+        k = 8
+        found = None
+        while found is None:
+            k = min(k, 2 * n)
+            dists, idxs = tree.query(cur_end, k=k)
+            for d, ei in zip(np.atleast_1d(dists), np.atleast_1d(idxs)):
+                seg = int(ei) // 2
+                if not used[seg]:
+                    found = (seg, int(ei) % 2, float(d))
+                    break
+            if found is None:
+                if k >= 2 * n:
+                    break
+                k *= 2
+        if found is None:
+            break
+        seg, which, d = found
+        a = ends[2 * seg + which]
+        b = ends[2 * seg + (1 - which)]
+        parts.append(f"{'L' if d <= join_jump else 'M'} {a[0]:.2f},{a[1]:.2f}")
+        parts.append(f"L {b[0]:.2f},{b[1]:.2f}")
+        used[seg] = True
+        cur_end = b
+        remaining -= 1
+
+    return " ".join(parts)
+
 
 def stitch_segs_to_d_string(segs: List[LineString], stitch_jump: float) -> str:
     """
@@ -1463,7 +1535,11 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             segs.extend(clip_lines_to_polygon(lines, poly))
         if not segs:
             continue
-        d = stitch_segs_to_d_string(segs, spacing * 1.4)          # step 5: 1 layer = 1 path
+        # step 5: 1 layer = 1 path, greedy NN tour to minimise pen lifts
+        if cfg.tonal_greedy_stitch:
+            d = stitch_segs_greedy(segs, spacing * float(cfg.tonal_join_mult))
+        else:
+            d = stitch_segs_to_d_string(segs, spacing * 1.4)
         if d:
             all_d.append(d)
             if log: log(f"Tonal layer {i+1}: tone<{th:.2f} ang={angle:.0f} "
