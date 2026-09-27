@@ -81,6 +81,21 @@ PRESETS: Dict[str, HatchConfig] = {
         lightedge_pct=88.0,
         lightedge_budget=650,
     ),
+
+    # Edge-forward line-art: vectorize HED edges into contour strokes that trace
+    # the subject, plus light hatching in the darkest regions. This is the new
+    # architecture meant to make subjects actually recognizable.
+    "line_art": replace(
+        BASELINE,
+        line_art=True,
+        line_edge_source="hed",
+        line_edge_thr=0.14,        # tuned: catches interior features, still clean
+        line_min_len_px=6.0,
+        line_smooth_px=0.8,
+        line_shade=True,
+        line_shade_thr=0.22,       # shade only deepest darks (less clutter)
+        line_shade_spacing_px=5.0,
+    ),
 }
 
 

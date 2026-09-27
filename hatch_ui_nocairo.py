@@ -334,6 +334,31 @@ class HatchConfig:
     iso_contour_budget: int     = 2000  # max path elements
     iso_contour_gamma: float    = 0.5   # level compression (<1 = more in darks)
 
+    # ── Line-art mode ─────────────────────────────────────────────────────────
+    # Edge-forward: vectorize an edge map (HED or Canny) into polyline strokes
+    # that TRACE the subject's contours, then add light hatching only in the
+    # darkest regions for shading.  Produces a recognizable pen-and-ink drawing,
+    # unlike the tone-band fills which only shade.  When True this REPLACES the
+    # band/aux machinery entirely.
+    line_art: bool             = False
+    line_edge_source: str      = "hed"    # "hed" | "canny"
+    line_hed_px: int           = 640      # HED inference long-edge (finer = more detail)
+    line_edge_thr: float       = 0.28     # edge-probability threshold (hed path)
+    line_canny_lo: int         = 60
+    line_canny_hi: int         = 160
+    line_smooth_px: float      = 1.0      # blur edge map before thresholding
+    line_min_len_px: float     = 9.0      # drop polylines shorter than this (noise)
+    line_simplify_px: float    = 1.0      # Douglas-Peucker tolerance
+    line_stitch_jump_px: float = 6.0      # chain endpoints within this = pen stays down
+    line_subpaths_per_path: int = 1500    # pack this many strokes into one <path>
+    line_max_paths: int        = 4500
+    # Shading (secondary): hatch only tones darker than the threshold
+    line_shade: bool           = True
+    line_shade_thr: float      = 0.32
+    line_shade_spacing_px: float = 4.5
+    line_shade_angle: float    = 45.0
+    line_shade_min_area_px2: float = 40.0
+
     # SVG stroke
     stroke_width: float    = 0.55
     stroke_linecap: str    = "round"
@@ -1065,6 +1090,225 @@ def render_preview(d_strings: List[str], img_w: int, img_h: int,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Line-art mode — edge contours as polyline strokes + light shading
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _line_edge_map(png_path: str, arr: np.ndarray, cfg: HatchConfig, log=None) -> np.ndarray:
+    """Edge-probability map (0..1) at the working-array resolution."""
+    h, w = arr.shape
+    src = cfg.line_edge_source
+    if src == "hed" and _CV2_OK and hed_model_ready():
+        pil = Image.open(png_path).convert("RGBA")
+        bg  = Image.new("RGBA", pil.size, (255, 255, 255, 255))
+        pil = Image.alpha_composite(bg, pil).convert("RGB").resize((w, h), Image.LANCZOS)
+        e = run_hed(np.asarray(pil), max_px=max(64, int(cfg.line_hed_px)))
+        if log: log(f"Line edges: HED  ({w}x{h}, infer {cfg.line_hed_px}px)")
+        return e
+    # Canny / gradient fallback
+    if _CV2_OK:
+        g = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+        e = _cv2.Canny(g, int(cfg.line_canny_lo), int(cfg.line_canny_hi))
+        if log: log("Line edges: Canny (HED unavailable)")
+        return (e > 0).astype(np.float32)
+    gm = grad_mag(arr)
+    if log: log("Line edges: gradient fallback")
+    return gm / (float(gm.max()) + 1e-6)
+
+
+def _trace_skeleton(skel: np.ndarray) -> List[List[Tuple[int, int]]]:
+    """Trace a 1-px skeleton into polyline pixel-chains (each edge walked once)."""
+    pts = set(zip(*np.where(skel)))
+    if not pts:
+        return []
+    NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+
+    def neighbors(p):
+        r, c = p
+        return [(r + dr, c + dc) for dr, dc in NB if (r + dr, c + dc) in pts]
+
+    deg  = {p: len(neighbors(p)) for p in pts}
+    seen = set()                       # frozenset({p, q}) edges already walked
+    chains: List[List[Tuple[int, int]]] = []
+
+    def walk(start, second):
+        chain = [start, second]
+        seen.add(frozenset((start, second)))
+        prev, cur = start, second
+        while deg.get(cur, 0) == 2:    # keep going through simple path pixels
+            nxt = None
+            for q in neighbors(cur):
+                if q != prev and frozenset((cur, q)) not in seen:
+                    nxt = q
+                    break
+            if nxt is None:
+                break
+            seen.add(frozenset((cur, nxt)))
+            chain.append(nxt)
+            prev, cur = cur, nxt
+        return chain
+
+    # Start every chain at an endpoint or junction (deg != 2)
+    for p in [q for q in pts if deg[q] != 2]:
+        for q in neighbors(p):
+            if frozenset((p, q)) not in seen:
+                chains.append(walk(p, q))
+    # Remaining pure loops (all deg == 2)
+    for p in pts:
+        for q in neighbors(p):
+            if frozenset((p, q)) not in seen:
+                chains.append(walk(p, q))
+    return chains
+
+
+def edges_to_polylines(edge01: np.ndarray, cfg: HatchConfig, log=None) -> List[List[Tuple[float, float]]]:
+    """Threshold -> skeletonize -> trace -> simplify -> polylines in (x, y)."""
+    try:
+        from skimage.morphology import skeletonize
+    except Exception:
+        if log: log("edges_to_polylines: scikit-image missing")
+        return []
+
+    e = np.clip(edge01, 0.0, 1.0)
+    if cfg.line_smooth_px > 0:
+        e = np.asarray(
+            Image.fromarray((e * 255).astype(np.uint8))
+                 .filter(ImageFilter.GaussianBlur(float(cfg.line_smooth_px)))
+        ).astype(np.float32) / 255.0
+
+    binary = e >= float(cfg.line_edge_thr)
+    if binary.sum() == 0:
+        return []
+    skel = skeletonize(binary)
+    chains = _trace_skeleton(skel)
+
+    out: List[List[Tuple[float, float]]] = []
+    for chain in chains:
+        if len(chain) < 2:
+            continue
+        ls = LineString([(float(c), float(r)) for (r, c) in chain])  # x=col, y=row
+        if ls.length < float(cfg.line_min_len_px):
+            continue
+        if cfg.line_simplify_px > 0:
+            ls = ls.simplify(float(cfg.line_simplify_px), preserve_topology=False)
+        coords = list(ls.coords)
+        if len(coords) >= 2:
+            out.append(coords)
+    if log: log(f"Line strokes: {len(out)} polylines (from {len(chains)} traced)")
+    return out
+
+
+def polylines_to_d_strings(polylines, cfg: HatchConfig) -> List[str]:
+    """Order strokes on a boustrophedon grid, pen-down-join near ones, pack
+    many subpaths per <path> to keep the Cricut path count low."""
+    if not polylines:
+        return []
+
+    band = max(1.0, float(cfg.line_stitch_jump_px) * 4.0)
+
+    def key(pl):
+        x0, y0 = pl[0]
+        b = int(y0 // band)
+        return (b, x0 if b % 2 == 0 else -x0)   # snake left/right per row band
+
+    polylines = sorted(polylines, key=key)
+    jump = float(cfg.line_stitch_jump_px)
+
+    paths: List[str] = []
+    parts: List[str] = []
+    subpaths = 0
+    prev_end = None
+
+    def flush():
+        nonlocal parts, subpaths, prev_end
+        if parts:
+            paths.append(" ".join(parts))
+        parts, subpaths, prev_end = [], 0, None
+
+    for pl in polylines:
+        if prev_end is not None:
+            d0 = math.hypot(prev_end[0] - pl[0][0],  prev_end[1] - pl[0][1])
+            d1 = math.hypot(prev_end[0] - pl[-1][0], prev_end[1] - pl[-1][1])
+            if d1 < d0:
+                pl = pl[::-1]
+            gap = min(d0, d1)
+        else:
+            gap = None
+
+        x0, y0 = pl[0]
+        if prev_end is not None and gap is not None and gap <= jump:
+            parts.append(f"L {x0:.2f},{y0:.2f}")     # pen stays down
+        else:
+            parts.append(f"M {x0:.2f},{y0:.2f}")     # pen lift
+        for x, y in pl[1:]:
+            parts.append(f"L {x:.2f},{y:.2f}")
+        prev_end = pl[-1]
+        subpaths += 1
+        if subpaths >= int(cfg.line_subpaths_per_path):
+            flush()
+    flush()
+    return paths[:int(cfg.line_max_paths)]
+
+
+def run_line_art(png_path: str, arr: np.ndarray, cfg: HatchConfig,
+                 out_svg_path: str, t0: float, status_cb=None, log=None) -> Dict:
+    h, w = arr.shape
+    bounds = (0.0, 0.0, float(w), float(h))
+
+    if status_cb: status_cb("Line-art: detecting edges…")
+    edge = _line_edge_map(png_path, arr, cfg, log=log)
+
+    if status_cb: status_cb("Line-art: vectorizing contours…")
+    polylines = edges_to_polylines(edge, cfg, log=log)
+    line_d = polylines_to_d_strings(polylines, cfg)
+
+    # Secondary shading: hatch only the darkest tones, drawn under the lines.
+    shade_d: List[str] = []
+    if cfg.line_shade:
+        if status_cb: status_cb("Line-art: shading darks…")
+        dark = (arr < float(cfg.line_shade_thr))
+        polys = mask_to_polygons(dark, cfg,
+                                 min_area=float(cfg.line_shade_min_area_px2),
+                                 simplify_tol=cfg.simplify_tolerance_px)
+        remaining = max(0, cfg.line_max_paths - len(line_d))
+        shade_d = hatch_polys_to_d_strings(
+            polys, bounds,
+            spacing=max(1.0, float(cfg.line_shade_spacing_px)),
+            angle=float(cfg.line_shade_angle), phase=0.0, cross=False,
+            stitch_jump=float(cfg.line_shade_spacing_px) * 1.2,
+            cap=remaining,
+        )
+        if log: log(f"Shading: {len(shade_d)} paths from {len(polys)} dark polys")
+
+    all_d = shade_d + line_d          # shading first, contours on top
+    if not all_d:
+        all_d = ["M 0,0 L 0,0"]
+
+    if status_cb: status_cb("Writing SVG…")
+    write_svg(out_svg_path, all_d, w, h, cfg, status_cb=status_cb)
+
+    preview_img = None
+    try:
+        preview_img = render_preview(all_d, w, h)
+        preview_img.save(os.path.splitext(out_svg_path)[0] + "_preview.png")
+    except Exception as _e:
+        if log: log(f"Preview error: {_e}")
+
+    pen_lifts = sum(d.count("M ") for d in all_d)
+    return {
+        "paths":         len(all_d),
+        "pen_lifts_est": pen_lifts,
+        "elapsed_sec":   time.time() - t0,
+        "work_w":        w,
+        "work_h":        h,
+        "aux_used":      len(shade_d),
+        "line_strokes":  len(polylines),
+        "preview_image": preview_img,
+        "band_results":  [],
+        "band_caps":     [],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1082,6 +1326,11 @@ def hatch_pipeline(png_path: str, out_svg_path: str, cfg: HatchConfig,
     h, w = arr.shape
     bounds = (0.0, 0.0, float(w), float(h))
     log(f"Working image: {w}×{h}")
+
+    # Line-art mode replaces the band/aux machinery entirely.
+    if cfg.line_art:
+        return run_line_art(png_path, arr, cfg, out_svg_path, t0,
+                            status_cb=status_cb, log=log)
 
     gmag_arr = grad_mag(arr)
     lap      = laplacian_abs(arr)
