@@ -386,7 +386,8 @@ class HatchConfig:
     # overlapping angled layers; each layer is one stitched path (1 layer =
     # 1 path). Darker regions fall inside more layers -> more passes -> darker.
     tonal: bool                = False
-    tonal_max_layers: int      = 4      # caps how dark the darkest region gets
+    tonal_max_layers: int      = 10     # darkness rank 1-10 -> up to 10 crosshatch
+                                        # layers; more layers = finer tone + depth
     tonal_hi: float            = 0.62   # lightest layer threshold (lighter = white)
     tonal_lo: float            = 0.08   # darkest layer threshold
     tonal_spacing_px: float    = 4.5
