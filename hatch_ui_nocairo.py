@@ -820,29 +820,42 @@ def stitch_segs_greedy(segs: List[LineString], join_jump: float,
     remaining = n - 1
 
     while remaining > 0:
-        k = 8
-        found = None
-        while found is None:
+        # Gather the nearest unused endpoints as candidates (each endpoint is a
+        # possible entry side of its segment).
+        cand = []
+        k = 16
+        while not cand:
             k = min(k, 2 * n)
             dists, idxs = tree.query(cur_end, k=k)
             for d, ei in zip(np.atleast_1d(dists), np.atleast_1d(idxs)):
                 seg = int(ei) // 2
                 if not used[seg]:
-                    found = (seg, int(ei) % 2, float(d))
-                    break
-            if found is None:
-                if k >= 2 * n:
-                    break
+                    cand.append((float(d), seg, int(ei) % 2))
+            if not cand and k >= 2 * n:
+                break
+            if not cand:
                 k *= 2
-        if found is None:
+        if not cand:
             break
-        seg, which, d = found
+        cand.sort(key=lambda c: c[0])
+
+        # Prefer the nearest candidate whose connector stays pen-DOWN — a short
+        # turn, or (with a mask) a travel that doesn't cross whitespace. This
+        # picks the entry SIDE of the next line that avoids a white crossing;
+        # only if no nearby candidate qualifies do we accept a lift (nearest).
+        pick, pen_down = None, False
+        for d, seg, which in cand:
+            a = ends[2 * seg + which]
+            if d <= join_jump or (mask is not None and
+                    _travel_hidden(cur_end[0], cur_end[1], a[0], a[1], mask)):
+                pick, pen_down = (d, seg, which), True
+                break
+        if pick is None:
+            pick = cand[0]
+
+        _, seg, which = pick
         a = ends[2 * seg + which]
         b = ends[2 * seg + (1 - which)]
-        # Short jumps (normal boustrophedon turns) are always pen-down; longer
-        # jumps stay down only if the travel is hidden inside the dark region.
-        pen_down = (d <= join_jump) or (
-            mask is not None and _travel_hidden(cur_end[0], cur_end[1], a[0], a[1], mask))
         parts.append(f"{'L' if pen_down else 'M'} {a[0]:.2f},{a[1]:.2f}")
         parts.append(f"L {b[0]:.2f},{b[1]:.2f}")
         used[seg] = True
