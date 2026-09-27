@@ -23,3 +23,8 @@ Thumbs.db
 # Keep tracked feedback even though results/runs is ignored
 !results/grades.jsonl
 !results/baseline.json
+
+# Test images kept LOCAL — many are third-party / watermarked photos and this
+# repo is public. The harness references them by key; drop your own copies in.
+tests/images/*
+!tests/images/README.md

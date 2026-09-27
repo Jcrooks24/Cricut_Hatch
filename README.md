@@ -29,6 +29,27 @@ processing methodology is measured against a fixed set of test images, on both
 objective metrics (path count, pen-lifts, file size) and recorded human grades.
 A change that improves one subject but wrecks another shows up immediately.
 
+### Batch cockpit (recommended)
+
+One window: run the whole batch, grade each result, export the grades.
+
+```bash
+py -3.11 tests/batch_ui.py
+```
+
+1. Tick presets + images, hit **RUN BATCH** (generation runs on a worker
+   thread with a progress bar).
+2. Each result appears as a card with its preview + metrics; grade it 1-5 on
+   tone / detail / clean / overall and add notes.
+3. **Export for Claude** writes `results/feedback_<run>.md` and copies it to
+   your clipboard — paste that straight into Claude Code to drive adjustments.
+   **Promote baseline** accepts the run as the new reference.
+
+Timing note: dense images (e.g. a crowded scene) can take ~1-2 min each, so a
+full baseline pass over ~6 images is a few minutes. Grade while it fills in.
+
+The command-line tools below do the same thing in steps, if you prefer scripts.
+
 ```
 tests/
   presets.py     named HatchConfig variants (start from "baseline", tweak knobs)
