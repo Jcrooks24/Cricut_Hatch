@@ -352,12 +352,21 @@ class HatchConfig:
     line_stitch_jump_px: float = 6.0      # chain endpoints within this = pen stays down
     line_subpaths_per_path: int = 1500    # pack this many strokes into one <path>
     line_max_paths: int        = 4500
-    # Shading (secondary): hatch only tones darker than the threshold
+    # Shading (secondary): graduated crosshatch UNDER the contour lines.
+    # Multiple tone levels from line_shade_hi (lightest shaded) down to
+    # line_shade_lo (darkest); each level hatches at a different angle, so
+    # darker tones — which fall inside more levels — accumulate more passes
+    # and read darker. This gives a smooth tonal gradient across the subject,
+    # not a single rigid diagonal stripe.
     line_shade: bool           = True
-    line_shade_thr: float      = 0.32
-    line_shade_spacing_px: float = 4.5
-    line_shade_angle: float    = 45.0
+    line_shade_levels: int     = 4
+    line_shade_hi: float       = 0.60    # tones lighter than this stay white
+    line_shade_lo: float       = 0.06    # darkest shaded tone
+    line_shade_blur_px: float  = 2.0     # smooth tone masks (less staircase)
+    line_shade_spacing_px: float = 5.0   # per-pass spacing (constant)
+    line_shade_angle: float    = 30.0    # base angle; +45° per level
     line_shade_min_area_px2: float = 40.0
+    line_shade_thr: float      = 0.32    # (legacy, unused by graduated shading)
 
     # SVG stroke
     stroke_width: float    = 0.55
@@ -1261,23 +1270,39 @@ def run_line_art(png_path: str, arr: np.ndarray, cfg: HatchConfig,
     polylines = edges_to_polylines(edge, cfg, log=log)
     line_d = polylines_to_d_strings(polylines, cfg)
 
-    # Secondary shading: hatch only the darkest tones, drawn under the lines.
+    # Secondary shading: graduated crosshatch under the lines. Darker tones
+    # fall inside more levels → more overlapping angle passes → read darker.
     shade_d: List[str] = []
     if cfg.line_shade:
-        if status_cb: status_cb("Line-art: shading darks…")
-        dark = (arr < float(cfg.line_shade_thr))
-        polys = mask_to_polygons(dark, cfg,
-                                 min_area=float(cfg.line_shade_min_area_px2),
-                                 simplify_tol=cfg.simplify_tolerance_px)
+        if status_cb: status_cb("Line-art: graduated shading…")
+        arr_s = arr
+        if cfg.line_shade_blur_px > 0:
+            arr_s = np.asarray(
+                Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8))
+                     .filter(ImageFilter.GaussianBlur(float(cfg.line_shade_blur_px)))
+            ).astype(np.float32) / 255.0
+
+        levels = max(1, int(cfg.line_shade_levels))
+        ths = np.linspace(float(cfg.line_shade_hi), float(cfg.line_shade_lo), levels)
         remaining = max(0, cfg.line_max_paths - len(line_d))
-        shade_d = hatch_polys_to_d_strings(
-            polys, bounds,
-            spacing=max(1.0, float(cfg.line_shade_spacing_px)),
-            angle=float(cfg.line_shade_angle), phase=0.0, cross=False,
-            stitch_jump=float(cfg.line_shade_spacing_px) * 1.2,
-            cap=remaining,
-        )
-        if log: log(f"Shading: {len(shade_d)} paths from {len(polys)} dark polys")
+        spacing = max(1.0, float(cfg.line_shade_spacing_px))
+        for li, th in enumerate(ths):
+            if remaining <= 0:
+                break
+            mask = arr_s < float(th)
+            if mask.sum() == 0:
+                continue
+            angle = float(cfg.line_shade_angle) + 45.0 * li   # distinct per level
+            polys = mask_to_polygons(mask, cfg,
+                                     min_area=float(cfg.line_shade_min_area_px2),
+                                     simplify_tol=cfg.simplify_tolerance_px)
+            d = hatch_polys_to_d_strings(
+                polys, bounds, spacing=spacing, angle=angle, phase=0.0,
+                cross=False, stitch_jump=spacing * 1.2, cap=remaining,
+            )
+            shade_d.extend(d)
+            remaining -= len(d)
+            if log: log(f"Shade L{li+1} tone<{th:.2f} ang={angle:.0f}: +{len(d)} paths")
 
     all_d = shade_d + line_d          # shading first, contours on top
     if not all_d:

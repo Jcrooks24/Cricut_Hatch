@@ -92,9 +92,10 @@ PRESETS: Dict[str, HatchConfig] = {
         line_edge_thr=0.14,        # tuned: catches interior features, still clean
         line_min_len_px=6.0,
         line_smooth_px=0.8,
-        line_shade=True,
-        line_shade_thr=0.22,       # shade only deepest darks (less clutter)
-        line_shade_spacing_px=5.0,
+        line_shade=True,           # graduated crosshatch shading (4 levels)
+        line_shade_levels=4,
+        line_shade_hi=0.60,
+        line_shade_lo=0.06,
     ),
 }
 
