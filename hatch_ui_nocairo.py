@@ -343,7 +343,14 @@ class HatchConfig:
     line_art: bool             = False
     line_edge_source: str      = "hed"    # "hed" | "canny"
     line_hed_px: int           = 640      # HED inference long-edge (finer = more detail)
-    line_edge_thr: float       = 0.28     # edge-probability threshold (hed path)
+    line_edge_thr: float       = 0.28     # single-threshold fallback (hed path)
+    # Hysteresis thresholding: keep edges above _hi, plus edges above _lo that
+    # connect to a _hi edge. Yields clean connected contours instead of the
+    # speckly closed-loop "web" a single flat threshold produces.
+    line_hysteresis: bool      = True
+    line_edge_thr_hi: float    = 0.32     # strong-edge seed
+    line_edge_thr_lo: float    = 0.10     # grow into weak edges connected to seeds
+    line_despur_px: float      = 7.0      # drop dead-end skeleton spurs shorter than this
     line_canny_lo: int         = 60
     line_canny_hi: int         = 160
     line_smooth_px: float      = 1.0      # blur edge map before thresholding
@@ -1166,7 +1173,7 @@ def _trace_skeleton(skel: np.ndarray) -> List[List[Tuple[int, int]]]:
         for q in neighbors(p):
             if frozenset((p, q)) not in seen:
                 chains.append(walk(p, q))
-    return chains
+    return chains, deg
 
 
 def edges_to_polylines(edge01: np.ndarray, cfg: HatchConfig, log=None) -> List[List[Tuple[float, float]]]:
@@ -1184,17 +1191,35 @@ def edges_to_polylines(edge01: np.ndarray, cfg: HatchConfig, log=None) -> List[L
                  .filter(ImageFilter.GaussianBlur(float(cfg.line_smooth_px)))
         ).astype(np.float32) / 255.0
 
-    binary = e >= float(cfg.line_edge_thr)
+    # Hysteresis thresholding gives clean connected contours; a single flat
+    # threshold produces a speckly web.
+    binary = None
+    if cfg.line_hysteresis:
+        try:
+            from skimage.filters import apply_hysteresis_threshold
+            binary = apply_hysteresis_threshold(
+                e, float(cfg.line_edge_thr_lo), float(cfg.line_edge_thr_hi))
+        except Exception:
+            binary = None
+    if binary is None:
+        binary = e >= float(cfg.line_edge_thr)
     if binary.sum() == 0:
         return []
     skel = skeletonize(binary)
-    chains = _trace_skeleton(skel)
+    chains, deg = _trace_skeleton(skel)
 
+    despur = float(cfg.line_despur_px)
     out: List[List[Tuple[float, float]]] = []
+    n_spur = 0
     for chain in chains:
         if len(chain) < 2:
             continue
         ls = LineString([(float(c), float(r)) for (r, c) in chain])  # x=col, y=row
+        # A chain with a free (degree-1) end that is short is a spur / fleck.
+        has_free_end = (deg.get(chain[0], 0) == 1 or deg.get(chain[-1], 0) == 1)
+        if has_free_end and ls.length < despur:
+            n_spur += 1
+            continue
         if ls.length < float(cfg.line_min_len_px):
             continue
         if cfg.line_simplify_px > 0:
@@ -1202,7 +1227,8 @@ def edges_to_polylines(edge01: np.ndarray, cfg: HatchConfig, log=None) -> List[L
         coords = list(ls.coords)
         if len(coords) >= 2:
             out.append(coords)
-    if log: log(f"Line strokes: {len(out)} polylines (from {len(chains)} traced)")
+    if log: log(f"Line strokes: {len(out)} polylines "
+                f"(from {len(chains)} traced, {n_spur} spurs pruned)")
     return out
 
 

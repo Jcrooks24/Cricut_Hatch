@@ -89,8 +89,11 @@ PRESETS: Dict[str, HatchConfig] = {
         BASELINE,
         line_art=True,
         line_edge_source="hed",
-        line_edge_thr=0.14,        # tuned: catches interior features, still clean
-        line_min_len_px=6.0,
+        line_hysteresis=True,      # clean connected contours (not a speckly web)
+        line_edge_thr_hi=0.50,     # only strong salient contours (less webby)
+        line_edge_thr_lo=0.20,
+        line_despur_px=12.0,       # prune dead-end fuzz
+        line_min_len_px=14.0,
         line_smooth_px=0.8,
         line_shade=True,           # graduated crosshatch shading (4 levels)
         line_shade_levels=4,
