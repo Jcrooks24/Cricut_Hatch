@@ -381,6 +381,20 @@ class HatchConfig:
     line_shade_min_area_px2: float = 40.0
     line_shade_thr: float      = 0.32    # (legacy, unused by graduated shading)
 
+    # ── Tonal mode ────────────────────────────────────────────────────────────
+    # Pure cross-hatch tonal rendering (no edge tracing). Darkness -> number of
+    # overlapping angled layers; each layer is one stitched path (1 layer =
+    # 1 path). Darker regions fall inside more layers -> more passes -> darker.
+    tonal: bool                = False
+    tonal_max_layers: int      = 4      # caps how dark the darkest region gets
+    tonal_hi: float            = 0.62   # lightest layer threshold (lighter = white)
+    tonal_lo: float            = 0.08   # darkest layer threshold
+    tonal_spacing_px: float    = 4.5
+    tonal_base_angle: float    = 25.0
+    tonal_angle_step: float    = 40.0   # angle offset per layer (step 6)
+    tonal_blur_px: float       = 2.0
+    tonal_min_area_px2: float  = 30.0
+
     # SVG stroke
     stroke_width: float    = 0.55
     stroke_linecap: str    = "round"
@@ -1402,6 +1416,85 @@ def run_line_art(png_path: str, arr: np.ndarray, cfg: HatchConfig,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Tonal mode — cross-hatch by darkness, one stitched path per angle-layer
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
+              out_svg_path: str, t0: float, status_cb=None, log=None) -> Dict:
+    """
+    Steps: 1) polygonize tonal regions  2) simplify  3) darkness -> layer count
+    4) each darker region falls inside more layers  5) stitch each layer into
+    ONE path  6) offset the hatch angle per layer so passes don't overlap.
+    """
+    h, w = arr.shape
+    bounds = (0.0, 0.0, float(w), float(h))
+
+    arr_s = arr
+    if cfg.tonal_blur_px > 0:
+        arr_s = np.asarray(
+            Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8))
+                 .filter(ImageFilter.GaussianBlur(float(cfg.tonal_blur_px)))
+        ).astype(np.float32) / 255.0
+
+    layers = max(1, int(cfg.tonal_max_layers))
+    # Nested thresholds: a pixel darker than ths[i] receives layer i. Darker
+    # pixels pass more thresholds -> more layers -> darker (steps 3-4).
+    ths = np.linspace(float(cfg.tonal_hi), float(cfg.tonal_lo), layers)
+    spacing = max(1.0, float(cfg.tonal_spacing_px))
+
+    all_d: List[str] = []
+    for i, th in enumerate(ths):
+        if status_cb: status_cb(f"Tonal layer {i+1}/{layers}…")
+        mask = arr_s < float(th)
+        # close border-touching regions so dark backgrounds polygonize
+        mask[0, :] = mask[-1, :] = False
+        mask[:, 0] = mask[:, -1] = False
+        if mask.sum() == 0:
+            continue
+        polys = mask_to_polygons(mask, cfg,                       # steps 1-2
+                                 min_area=float(cfg.tonal_min_area_px2),
+                                 simplify_tol=cfg.simplify_tolerance_px)
+        if not polys:
+            continue
+        angle = float(cfg.tonal_base_angle) + float(cfg.tonal_angle_step) * i  # step 6
+        lines = make_parallel_lines(bounds, spacing, angle, phase=0.0)
+        segs: List[LineString] = []
+        for poly in polys:
+            segs.extend(clip_lines_to_polygon(lines, poly))
+        if not segs:
+            continue
+        d = stitch_segs_to_d_string(segs, spacing * 1.4)          # step 5: 1 layer = 1 path
+        if d:
+            all_d.append(d)
+            if log: log(f"Tonal layer {i+1}: tone<{th:.2f} ang={angle:.0f} "
+                        f"polys={len(polys)} segs={len(segs)} -> 1 path")
+
+    if not all_d:
+        all_d = ["M 0,0 L 0,0"]
+
+    if status_cb: status_cb("Writing SVG…")
+    write_svg(out_svg_path, all_d, w, h, cfg, status_cb=status_cb)
+
+    preview_img = None
+    try:
+        preview_img = render_preview(all_d, w, h)
+        preview_img.save(os.path.splitext(out_svg_path)[0] + "_preview.png")
+    except Exception as _e:
+        if log: log(f"Preview error: {_e}")
+
+    return {
+        "paths":         len(all_d),
+        "pen_lifts_est": sum(d.count("M ") for d in all_d),
+        "elapsed_sec":   time.time() - t0,
+        "work_w":        w, "work_h": h,
+        "aux_used":      len(all_d),
+        "line_strokes":  0,
+        "preview_image": preview_img,
+        "band_results":  [], "band_caps": [],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1424,6 +1517,11 @@ def hatch_pipeline(png_path: str, out_svg_path: str, cfg: HatchConfig,
     if cfg.line_art:
         return run_line_art(png_path, arr, cfg, out_svg_path, t0,
                             status_cb=status_cb, log=log)
+
+    # Tonal mode: pure cross-hatch by darkness, one path per angle-layer.
+    if cfg.tonal:
+        return run_tonal(png_path, arr, cfg, out_svg_path, t0,
+                         status_cb=status_cb, log=log)
 
     gmag_arr = grad_mag(arr)
     lap      = laplacian_abs(arr)

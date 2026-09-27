@@ -102,6 +102,18 @@ PRESETS: Dict[str, HatchConfig] = {
         line_shade_spacing_px=6.0, # a touch wider so 3 passes stays readable
         max_pen_lifts=1000,        # override live in the cockpit per your Cricut
     ),
+
+    # Pure tonal cross-hatch (your 6-step method): polygons ranked by darkness,
+    # darkness -> number of angled layers, each layer stitched into ONE path.
+    # No edge tracing — tonal only.
+    "tonal": replace(
+        BASELINE,
+        tonal=True,
+        tonal_max_layers=4,
+        tonal_hi=0.62,
+        tonal_lo=0.08,
+        tonal_spacing_px=4.5,
+    ),
 }
 
 
