@@ -399,6 +399,10 @@ class HatchConfig:
     # fewer layers (lighter overall) while pure blacks stay dark — keeps 10-layer
     # depth without the whole image going too dark. 1.0 = linear (no change).
     tonal_gamma: float         = 1.0
+    # Ordered (Bayer) dither amplitude, in units of one threshold step. Breaks up
+    # the hard contour banding between adjacent pass-counts into a stipple.
+    # 0 = off; ~1.0 = full step.
+    tonal_dither: float        = 0.0
     # Greedy nearest-neighbour stitching to cut pen lifts. Segments within
     # join_mult * spacing connect pen-DOWN (short travel line); farther jumps
     # lift the pen. Larger = fewer lifts but more visible travel moves.
@@ -1537,6 +1541,14 @@ def run_line_art(png_path: str, arr: np.ndarray, cfg: HatchConfig,
 # Tonal mode — cross-hatch by darkness, one stitched path per angle-layer
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _bayer_matrix(n: int) -> np.ndarray:
+    """n x n ordered-dither matrix normalised to [0,1) (n a power of two)."""
+    m = np.array([[0]])
+    while m.shape[0] < n:
+        m = np.block([[4 * m, 4 * m + 2], [4 * m + 3, 4 * m + 1]])
+    return (m + 0.5) / (m.shape[0] * m.shape[1])
+
+
 def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
               out_svg_path: str, t0: float, status_cb=None, log=None) -> Dict:
     """
@@ -1560,6 +1572,16 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
         arr_s = np.clip(arr_s, 0.0, 1.0) ** float(cfg.tonal_gamma)
 
     layers = max(1, int(cfg.tonal_max_layers))
+
+    # Ordered dither: nudge each pixel's tone by up to +/- half a threshold step
+    # using a tiled Bayer matrix, so the hard boundary between k and k+1 passes
+    # becomes a stippled transition instead of a visible contour band.
+    if cfg.tonal_dither > 0 and layers > 1:
+        step = (float(cfg.tonal_hi) - float(cfg.tonal_lo)) / (layers - 1)
+        bayer = _bayer_matrix(8) - 0.5                       # -0.5..+0.5, deterministic
+        th, tw = arr_s.shape
+        tile = np.tile(bayer, (th // 8 + 1, tw // 8 + 1))[:th, :tw]
+        arr_s = np.clip(arr_s + tile * step * float(cfg.tonal_dither), 0.0, 1.0)
     # Nested thresholds: a pixel darker than ths[i] receives layer i. Darker
     # pixels pass more thresholds -> more layers -> darker (steps 3-4).
     ths = np.linspace(float(cfg.tonal_hi), float(cfg.tonal_lo), layers)

@@ -25,10 +25,21 @@ if _REPO_ROOT not in sys.path:
 from hatch_ui_nocairo import HatchConfig
 
 
-# The tonal cross-hatch method is the baseline: 10 darkness layers for depth,
-# with tonal_gamma < 1 lifting mid/light tones so the image keeps that depth
-# without going too dark (pure blacks stay black).
-BASELINE = replace(HatchConfig(), tonal=True, tonal_max_layers=10, tonal_gamma=0.7)
+# The tonal cross-hatch method is the baseline: 10 darkness layers for depth.
+#   band_gamma=1.0 : neutral preprocessing, so tonal_gamma is the SINGLE tone
+#                    control (the default 1.2 was double-darkening before tonal).
+#   tonal_gamma<1  : tone-reproduction curve — compensates for the non-linear
+#                    darkening of overlapping passes so mid tones aren't too dark.
+#   tonal_dither   : Bayer dither on the thresholds to break contour banding in
+#                    smooth (esp. dark) regions into a stipple.
+BASELINE = replace(
+    HatchConfig(),
+    tonal=True,
+    tonal_max_layers=10,
+    band_gamma=1.0,
+    tonal_gamma=0.8,
+    tonal_dither=1.0,
+)
 
 
 PRESETS: Dict[str, HatchConfig] = {
