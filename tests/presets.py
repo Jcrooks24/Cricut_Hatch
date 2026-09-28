@@ -38,12 +38,19 @@ BASELINE = replace(
     tonal_max_layers=10,
     band_gamma=1.0,
     tonal_gamma=0.8,
-    tonal_dither=1.0,
-    # Final pass: outline the darkest regions for crisp shadow definition
-    # (dark only — outlining light regions looks odd).
+    # --- fine-detail wins (from the ultracode methodology search) -------------
+    tonal_blur_px=0.8,             # sharper region boundaries -> readable eyes/texture
+    tonal_min_area_px2=40,         # keep features but merge dark-ground speckle
+    local_contrast_radius=10,      # finer local contrast separates facial planes
+    local_contrast_strength=0.8,
+    stroke_width=0.5,              # finer lines keep dense texture legible
+    # --- tonal-nuance wins ----------------------------------------------------
+    tonal_angle_step=111.25,       # golden-ish angle spread -> less moire, smoother
+    tonal_dither=0.6,              # anti-banding stipple (less needed w/ fine seg)
+    # --- final trace pass (dark regions only) ---------------------------------
     tonal_trace=True,
-    tonal_trace_layers=2,
-    tonal_trace_min_area_px2=200.0,
+    tonal_trace_layers=1,          # outline only the darkest layer (fewer rings)
+    tonal_trace_min_area_px2=600.0,
 )
 
 
