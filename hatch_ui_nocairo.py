@@ -395,6 +395,10 @@ class HatchConfig:
     tonal_angle_step: float    = 40.0   # angle offset per layer (step 6)
     tonal_blur_px: float       = 2.0
     tonal_min_area_px2: float  = 30.0
+    # Tone-curve before thresholding. <1 lifts mid/light tones so they fall into
+    # fewer layers (lighter overall) while pure blacks stay dark — keeps 10-layer
+    # depth without the whole image going too dark. 1.0 = linear (no change).
+    tonal_gamma: float         = 1.0
     # Greedy nearest-neighbour stitching to cut pen lifts. Segments within
     # join_mult * spacing connect pen-DOWN (short travel line); farther jumps
     # lift the pen. Larger = fewer lifts but more visible travel moves.
@@ -1549,6 +1553,11 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8))
                  .filter(ImageFilter.GaussianBlur(float(cfg.tonal_blur_px)))
         ).astype(np.float32) / 255.0
+
+    # Tone curve: gamma < 1 lifts mid/light tones (fewer layers -> lighter),
+    # pure black stays black. Applied to the darkness used for thresholding.
+    if cfg.tonal_gamma != 1.0:
+        arr_s = np.clip(arr_s, 0.0, 1.0) ** float(cfg.tonal_gamma)
 
     layers = max(1, int(cfg.tonal_max_layers))
     # Nested thresholds: a pixel darker than ths[i] receives layer i. Darker

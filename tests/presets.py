@@ -25,8 +25,10 @@ if _REPO_ROOT not in sys.path:
 from hatch_ui_nocairo import HatchConfig
 
 
-# The tonal cross-hatch method is the baseline (10 darkness layers).
-BASELINE = replace(HatchConfig(), tonal=True, tonal_max_layers=10)
+# The tonal cross-hatch method is the baseline: 10 darkness layers for depth,
+# with tonal_gamma < 1 lifting mid/light tones so the image keeps that depth
+# without going too dark (pure blacks stay black).
+BASELINE = replace(HatchConfig(), tonal=True, tonal_max_layers=10, tonal_gamma=0.7)
 
 
 PRESETS: Dict[str, HatchConfig] = {
