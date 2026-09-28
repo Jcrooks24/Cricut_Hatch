@@ -39,6 +39,11 @@ BASELINE = replace(
     band_gamma=1.0,
     tonal_gamma=0.8,
     tonal_dither=1.0,
+    # Final pass: outline the darkest regions for crisp shadow definition
+    # (dark only — outlining light regions looks odd).
+    tonal_trace=True,
+    tonal_trace_layers=2,
+    tonal_trace_min_area_px2=200.0,
 )
 
 

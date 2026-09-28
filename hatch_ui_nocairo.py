@@ -403,6 +403,13 @@ class HatchConfig:
     # the hard contour banding between adjacent pass-counts into a stipple.
     # 0 = off; ~1.0 = full step.
     tonal_dither: float        = 0.0
+    # Final pass: outline the darkest regions for crisp definition (drawn on top
+    # of the shading). Only dark regions are traced — outlining light regions
+    # looks odd. One extra path.
+    tonal_trace: bool          = False
+    tonal_trace_layers: int    = 2       # outline the darkest N layers' regions
+    tonal_trace_min_area_px2: float = 200.0  # only trace significant masses
+    tonal_trace_holes: bool    = True    # also outline interior holes
     # Greedy nearest-neighbour stitching to cut pen lifts. Segments within
     # join_mult * spacing connect pen-DOWN (short travel line); farther jumps
     # lift the pen. Larger = fewer lifts but more visible travel moves.
@@ -1573,6 +1580,9 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
 
     layers = max(1, int(cfg.tonal_max_layers))
 
+    # Clean (pre-dither) tone for the trace pass, so outlines aren't speckled.
+    arr_clean = arr_s.copy()
+
     # Ordered dither: nudge each pixel's tone by up to +/- half a threshold step
     # using a tiled Bayer matrix, so the hard boundary between k and k+1 passes
     # becomes a stippled transition instead of a visible contour band.
@@ -1619,6 +1629,39 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             all_d.append(d)
             if log: log(f"Tonal layer {i+1}: tone<{th:.2f} ang={angle:.0f} "
                         f"polys={len(polys)} segs={len(segs)} -> 1 path")
+
+    # Final pass: outline the darkest N layers' regions (crisp shadow definition).
+    # Only dark regions — outlining light regions looks odd. One extra path.
+    if cfg.tonal_trace and layers > 0:
+        if status_cb: status_cb("Tonal: tracing dark regions…")
+        rings: List[List] = []
+        n_trace = max(1, int(cfg.tonal_trace_layers))
+        for i in range(max(0, layers - n_trace), layers):
+            m = arr_clean < float(ths[i])          # clean tone -> smooth outlines
+            m[0, :] = m[-1, :] = False
+            m[:, 0] = m[:, -1] = False
+            if m.sum() == 0:
+                continue
+            for p in mask_to_polygons(m, cfg,
+                                      min_area=float(cfg.tonal_trace_min_area_px2),
+                                      simplify_tol=cfg.simplify_tolerance_px):
+                rings.append(list(p.exterior.coords))
+                if cfg.tonal_trace_holes:
+                    for r in p.interiors:
+                        rings.append(list(r.coords))
+        if rings:
+            band = spacing * 4.0
+            rings.sort(key=lambda r: (int(r[0][1] // band),
+                                      r[0][0] if int(r[0][1] // band) % 2 == 0 else -r[0][0]))
+            parts: List[str] = []
+            for r in rings:
+                if len(r) < 2:
+                    continue
+                parts.append(f"M {r[0][0]:.2f},{r[0][1]:.2f}")
+                parts.extend(f"L {x:.2f},{y:.2f}" for x, y in r[1:])
+            if parts:
+                all_d.append(" ".join(parts))
+                if log: log(f"Trace pass: {len(rings)} dark-region outlines -> 1 path")
 
     if not all_d:
         all_d = ["M 0,0 L 0,0"]
