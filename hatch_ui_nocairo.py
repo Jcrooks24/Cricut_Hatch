@@ -793,15 +793,19 @@ def _travel_hidden(x0: float, y0: float, x1: float, y1: float,
 
 
 def stitch_segs_greedy(segs: List[LineString], join_jump: float,
-                       mask: Optional[np.ndarray] = None) -> str:
+                       mask: Optional[np.ndarray] = None,
+                       short_join: float = 0.0) -> str:
     """
     Stitch many hatch segments into ONE d-string via a greedy nearest-neighbour
     tour: always travel to the closest unused segment.
 
     Pen-down vs pen-up per jump:
-      - with `mask` (the layer's dark region): pen stays DOWN whenever the travel
-        runs through hatched area (invisible) and only LIFTS when it would cross a
-        light/unhatched area — minimises lifts with no visible connectors.
+      - jumps <= short_join are ALWAYS pen-down (normal adjacent-line turns; tiny
+        and effectively invisible) — keeps the pen-lift count low.
+      - longer jumps (up to join_jump) stay down only when a `mask` is given AND
+        the travel stays inside the hatched region (invisible); otherwise lift.
+        This lets join_jump be raised to connect same-region gaps through dark
+        without ever drawing a connector across a white/light area.
       - without `mask`: pen-down for jumps <= join_jump, else lift.
 
     A NN tour finishes one region before jumping, so lifts drop sharply vs a
@@ -855,15 +859,22 @@ def stitch_segs_greedy(segs: List[LineString], join_jump: float,
             break
         cand.sort(key=lambda c: c[0])
 
-        # Prefer the nearest candidate whose connector stays pen-DOWN — a short
-        # turn, or (with a mask) a travel that doesn't cross whitespace. This
-        # picks the entry SIDE of the next line that avoids a white crossing;
-        # only if no nearby candidate qualifies do we accept a lift (nearest).
+        # Prefer the nearest candidate whose connector stays pen-DOWN. With a
+        # mask, "pen-down" means the travel stays INSIDE the hatched region
+        # (invisible) — the distance clause alone is NOT enough, or a short jump
+        # would still draw a visible line across a white gap. This also picks the
+        # entry SIDE of the next line that avoids a white crossing. Only if no
+        # nearby candidate qualifies do we accept a lift (nearest).
         pick, pen_down = None, False
         for d, seg, which in cand:
             a = ends[2 * seg + which]
-            if d <= join_jump or (mask is not None and
-                    _travel_hidden(cur_end[0], cur_end[1], a[0], a[1], mask)):
+            if d <= short_join:
+                ok = True                                    # normal short turn
+            elif mask is not None:
+                ok = _travel_hidden(cur_end[0], cur_end[1], a[0], a[1], mask)  # hidden, any distance
+            else:
+                ok = d <= join_jump
+            if ok:
                 pick, pen_down = (d, seg, which), True
                 break
         if pick is None:
@@ -1622,7 +1633,8 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
         if cfg.tonal_greedy_stitch:
             d = stitch_segs_greedy(
                 segs, spacing * float(cfg.tonal_join_mult),
-                mask=mask if cfg.tonal_hide_travel else None)
+                mask=mask if cfg.tonal_hide_travel else None,
+                short_join=spacing * 1.6)
         else:
             d = stitch_segs_to_d_string(segs, spacing * 1.4)
         if d:
