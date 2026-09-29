@@ -9,14 +9,14 @@ there (one extra pen lift), so only the subtle in-region connectors remain.
     py -3.11 tests/break_tool.py [path/to/<name>_strokes.json]
 
 If no path is given, the most recent *_strokes.json under results/runs is used.
-Generate one first by rendering any image with a single-path preset, e.g. the
-"single_path" preset in the batch cockpit, or:
-    hatch_pipeline(img, out.svg, replace(baseline, tonal_single_path=True))
 
-Workflow: red overlay lines are the travel connectors (filtered by length via the
-slider). Click one to toggle a break (red = kept pen-down, green = broken/pen-up).
-Export writes <name>_broken.svg with the breaks applied. Short connectors below
-the slider are always kept pen-down (they're invisible in-region turns).
+Controls:
+    scroll wheel   zoom to cursor
+    right-drag     pan
+    left-click     toggle a break on the nearest connector
+    left-drag      "paint" breaks across every connector you swipe over
+Red = connector kept (pen-down). Green = broken (pen-up). Short connectors below
+the length slider are always kept. Export writes <name>_broken.svg.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness as H
 from hatch_ui_nocairo import HatchConfig, strokes_to_single_d, write_svg, render_preview
 
-DISP_MAX = 1000   # max display dimension
+DISP_MAX = 900   # base display dimension (zoom in for detail)
 
 
 # ── non-GUI logic (importable / testable) ──────────────────────────────────────
@@ -90,73 +90,166 @@ class BreakApp:
         self.dw = max(1, int(self.w * self.scale))
         self.dh = max(1, int(self.h * self.scale))
         self.min_len = 15.0
-        self.line_tags = {}   # connector index -> drawn line tag
+        self.line_tags = {}          # connector index -> drawn line tag
+        self.zoom = 1.0
+        self.pan = [0.0, 0.0]        # drawlist-local translation (px)
+        self._pan0 = [0.0, 0.0]
+        self._moved = False
+        self._ldown = False          # left gesture in progress
+        self._rdown = False          # right (pan) gesture in progress
 
-    # candidates = connectors longer than the length filter
     def _candidates(self):
         return [c for c in self.conns if c[3] >= self.min_len]
 
-    def _draw_overlay(self):
-        dpg.delete_item("dl", children_only=True, slot=2)
-        dpg.draw_image("bg", (0, 0), (self.dw, self.dh), parent="dl")
+    # ── coordinate transforms ─────────────────────────────────────────────────
+    def _apply_transform(self):
+        m = (dpg.create_translation_matrix([self.pan[0], self.pan[1], 0.0]) *
+             dpg.create_scale_matrix([self.zoom, self.zoom, 1.0]))
+        dpg.apply_transform("scene", m)
+
+    def _mouse_to_image(self, mx, my):
+        """Screen mouse pos -> image-space (px), inverting drawlist/pan/zoom/scale."""
+        try:
+            ox, oy = dpg.get_item_rect_min("dl")
+        except Exception:
+            return None
+        lx, ly = mx - ox, my - oy                       # drawlist-local screen px
+        dx = (lx - self.pan[0]) / self.zoom             # display px (pre-transform)
+        dy = (ly - self.pan[1]) / self.zoom
+        return dx / self.scale, dy / self.scale, lx, ly
+
+    # ── scene build / redraw ──────────────────────────────────────────────────
+    def _rebuild_scene(self):
+        dpg.delete_item("scene", children_only=True)
+        dpg.draw_image("bg", (0, 0), (self.dw, self.dh), parent="scene")
         self.line_tags.clear()
         for (k, p0, p1, ln) in self._candidates():
             col = (40, 200, 40, 255) if k in self.broken else (230, 30, 30, 220)
             tag = dpg.draw_line((p0[0] * self.scale, p0[1] * self.scale),
                                 (p1[0] * self.scale, p1[1] * self.scale),
-                                color=col, thickness=1.5, parent="dl")
+                                color=col, thickness=1.5, parent="scene")
             self.line_tags[k] = tag
+        self._apply_transform()
         self._update_status()
 
     def _update_status(self):
-        cand = self._candidates()
         dpg.set_value("status",
-                      f"connectors shown: {len(cand)}  |  broken: {len(self.broken)}  "
-                      f"|  resulting pen lifts: {1 + len(self.broken)}")
+                      f"connectors shown: {len(self._candidates())}  |  "
+                      f"broken: {len(self.broken)}  |  "
+                      f"resulting pen lifts: {1 + len(self.broken)}  |  "
+                      f"zoom: {self.zoom:.1f}x")
 
-    def on_click(self):
-        mx, my = dpg.get_mouse_pos(local=False)
-        try:
-            ox, oy = dpg.get_item_rect_min("dl")
-        except Exception:
-            return
-        lx, ly = mx - ox, my - oy
-        if lx < 0 or ly < 0 or lx > self.dw or ly > self.dh:
-            return
-        # nearest candidate connector in display space, within 8px
-        best, bestd = None, 8.0
+    def _set_broken(self, k, value):
+        if value:
+            self.broken.add(k)
+        else:
+            self.broken.discard(k)
+        tag = self.line_tags.get(k)
+        if tag:
+            dpg.configure_item(tag, color=(40, 200, 40, 255) if value
+                               else (230, 30, 30, 220))
+
+    def _nearest_connector(self, ix, iy, radius_img):
+        best, bestd = None, radius_img
         for (k, p0, p1, ln) in self._candidates():
-            d = _seg_dist(lx, ly, p0[0] * self.scale, p0[1] * self.scale,
-                          p1[0] * self.scale, p1[1] * self.scale)
+            d = _seg_dist(ix, iy, p0[0], p0[1], p1[0], p1[1])
             if d < bestd:
                 best, bestd = k, d
-        if best is None:
+        return best
+
+    # ── mouse handlers ────────────────────────────────────────────────────────
+    def on_wheel(self, sender, app_data):
+        mp = dpg.get_mouse_pos(local=False)
+        conv = self._mouse_to_image(*mp)
+        if conv is None:
             return
-        if best in self.broken:
-            self.broken.discard(best)
-        else:
-            self.broken.add(best)
-        tag = self.line_tags.get(best)
-        if tag:
-            col = (40, 200, 40, 255) if best in self.broken else (230, 30, 30, 220)
-            dpg.configure_item(tag, color=col)
+        _, _, lx, ly = conv
+        if not (0 <= lx <= self.dw and 0 <= ly <= self.dh):
+            return
+        factor = 1.15 if app_data > 0 else 1.0 / 1.15
+        old, new = self.zoom, max(0.5, min(30.0, self.zoom * factor))
+        disp_x = (lx - self.pan[0]) / old
+        disp_y = (ly - self.pan[1]) / old
+        self.pan[0] = lx - new * disp_x                 # keep point under cursor fixed
+        self.pan[1] = ly - new * disp_y
+        self.zoom = new
+        self._apply_transform()
         self._update_status()
 
+    def on_right_down(self, sender, app_data):
+        # down fires every frame while held; capture pan origin only on frame 1
+        if not self._rdown:
+            self._rdown = True
+            self._pan0 = list(self.pan)
+
+    def on_right_drag(self, sender, app_data):
+        _, ddx, ddy = app_data
+        self.pan[0] = self._pan0[0] + ddx
+        self.pan[1] = self._pan0[1] + ddy
+        self._apply_transform()
+
+    def on_right_release(self, sender, app_data):
+        self._rdown = False
+
+    def on_left_down(self, sender, app_data):
+        if not self._ldown:            # first frame of the gesture only
+            self._ldown = True
+            self._moved = False
+
+    def on_left_drag(self, sender, app_data):
+        _, ddx, ddy = app_data
+        if abs(ddx) + abs(ddy) > 3:
+            self._moved = True
+        mp = dpg.get_mouse_pos(local=False)
+        conv = self._mouse_to_image(*mp)
+        if conv is None:
+            return
+        ix, iy, lx, ly = conv
+        if not (0 <= lx <= self.dw and 0 <= ly <= self.dh):
+            return
+        radius = 9.0 / (self.zoom * self.scale)         # ~9 screen px, in image px
+        k = self._nearest_connector(ix, iy, radius)
+        if k is not None and k not in self.broken:
+            self._set_broken(k, True)                   # paint-break (drag only breaks)
+            self._update_status()
+
+    def on_left_release(self, sender, app_data):
+        was_drag = self._moved
+        self._ldown = False
+        if was_drag:
+            return                                       # drag already painted breaks
+        mp = dpg.get_mouse_pos(local=False)
+        conv = self._mouse_to_image(*mp)
+        if conv is None:
+            return
+        ix, iy, lx, ly = conv
+        if not (0 <= lx <= self.dw and 0 <= ly <= self.dh):
+            return
+        radius = 9.0 / (self.zoom * self.scale)
+        k = self._nearest_connector(ix, iy, radius)
+        if k is not None:
+            self._set_broken(k, k not in self.broken)   # click = toggle
+            self._update_status()
+
+    # ── button callbacks ──────────────────────────────────────────────────────
     def on_filter(self, sender, value):
         self.min_len = float(value)
-        # drop breaks that are no longer candidates
-        self.broken = {k for k in self.broken
-                       if self.conns[k][3] >= self.min_len}
-        self._draw_overlay()
+        self.broken = {k for k in self.broken if self.conns[k][3] >= self.min_len}
+        self._rebuild_scene()
 
     def on_break_all_shown(self):
         for (k, p0, p1, ln) in self._candidates():
             self.broken.add(k)
-        self._draw_overlay()
+        self._rebuild_scene()
 
     def on_clear(self):
         self.broken.clear()
-        self._draw_overlay()
+        self._rebuild_scene()
+
+    def on_reset_view(self):
+        self.zoom, self.pan = 1.0, [0.0, 0.0]
+        self._apply_transform()
+        self._update_status()
 
     def on_export(self):
         out = os.path.splitext(self.path)[0].replace("_strokes", "") + "_broken.svg"
@@ -168,14 +261,12 @@ class BreakApp:
             pass
 
     def _make_bg_texture(self):
-        # strokes-only background (all connectors pen-up -> not drawn), faint.
         allbroken = set(range(len(self.strokes) - 1))
-        d = strokes_to_single_d(self.strokes, broken=allbroken)
+        d = strokes_to_single_d(self.strokes, broken=allbroken)   # strokes only
         im = render_preview([d], self.w, self.h, max_dim=DISP_MAX).convert("RGBA")
         im = im.resize((self.dw, self.dh))
-        # fade to light gray so red/green connectors pop
         arr = np.asarray(im).astype(np.float32) / 255.0
-        arr[..., :3] = 1.0 - (1.0 - arr[..., :3]) * 0.45
+        arr[..., :3] = 1.0 - (1.0 - arr[..., :3]) * 0.45          # fade for contrast
         with dpg.texture_registry():
             dpg.add_static_texture(self.dw, self.dh, arr.flatten(), tag="bg")
 
@@ -184,32 +275,40 @@ class BreakApp:
             dpg.add_text(f"Stitch-break tool — {os.path.basename(self.path)}  "
                          f"({len(self.strokes)} strokes, {len(self.conns)} connectors)",
                          color=(120, 200, 255))
-            dpg.add_text("Red = travel connector (kept). Click to toggle a break "
-                         "(green = cut / pen-up). Short connectors below the filter "
-                         "stay pen-down.", wrap=980)
+            dpg.add_text("scroll = zoom  |  right-drag = pan  |  left-click = toggle "
+                         "a break  |  left-drag = paint breaks across connectors",
+                         wrap=980, color=(170, 170, 170))
             with dpg.group(horizontal=True):
                 dpg.add_slider_float(label="min connector length (px)", tag="flt",
                                      default_value=self.min_len, min_value=2.0,
-                                     max_value=120.0, width=280, callback=self.on_filter)
+                                     max_value=120.0, width=260, callback=self.on_filter)
                 dpg.add_button(label="Break all shown", callback=self.on_break_all_shown)
-                dpg.add_button(label="Clear breaks", callback=self.on_clear)
+                dpg.add_button(label="Clear", callback=self.on_clear)
+                dpg.add_button(label="Reset view", callback=self.on_reset_view)
                 dpg.add_button(label="Export broken SVG", callback=self.on_export,
                                width=170)
             dpg.add_text("", tag="status")
             self._make_bg_texture()
             with dpg.drawlist(width=self.dw, height=self.dh, tag="dl"):
-                pass
+                dpg.draw_node(tag="scene")
+
         with dpg.handler_registry():
-            dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Left,
-                                        callback=self.on_click)
+            dpg.add_mouse_wheel_handler(callback=self.on_wheel)
+            dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Right, callback=self.on_right_down)
+            dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Right, callback=self.on_right_drag)
+            dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Right, callback=self.on_right_release)
+            dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Left, callback=self.on_left_down)
+            dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Left, threshold=0.0,
+                                       callback=self.on_left_drag)
+            dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Left, callback=self.on_left_release)
 
     def run(self):
         dpg.create_context()
         self.build()
-        self._draw_overlay()
+        self._rebuild_scene()
         dpg.create_viewport(title="Stitch-break tool",
                             width=min(1200, self.dw + 60),
-                            height=self.dh + 200)
+                            height=self.dh + 220)
         dpg.setup_dearpygui()
         dpg.show_viewport()
         dpg.set_primary_window("main", True)
