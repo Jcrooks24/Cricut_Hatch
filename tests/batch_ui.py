@@ -24,6 +24,7 @@ import json
 import queue
 import threading
 import traceback
+import subprocess
 
 from dataclasses import replace
 
@@ -70,12 +71,13 @@ class BatchTester:
         self.running = False
 
     # ── batch generation (worker thread) ─────────────────────────────────────
-    def start(self, preset_names, image_paths, pen_lift_cap=0):
+    def start(self, preset_names, image_paths, pen_lift_cap=0, single_path=False):
         if self.running:
             return
         self.running = True
         self.results = []
         self.pen_lift_cap = pen_lift_cap
+        self.single_path = single_path
         self.run_label = f"batch_{H.now_stamp()}"
         t = threading.Thread(target=self._run, args=(preset_names, image_paths),
                              daemon=True)
@@ -91,6 +93,9 @@ class BatchTester:
             # Live override of the pen-lift cap from the cockpit (0 = use preset).
             if getattr(self, "pen_lift_cap", 0) > 0:
                 cfg = replace(cfg, max_pen_lifts=int(self.pen_lift_cap))
+            # Live single-path override: one continuous stroke + a break-tool sidecar.
+            if getattr(self, "single_path", False):
+                cfg = replace(cfg, tonal_single_path=True)
             for img_path in image_paths:
                 key = H.image_key(img_path)
                 stem = f"{key}__{preset_name}"
@@ -104,10 +109,12 @@ class BatchTester:
                     thumb = os.path.splitext(out_svg)[0] + "_thumb.png"
                     if os.path.exists(preview):
                         _make_thumb(preview, thumb)
+                    sidecar = os.path.splitext(out_svg)[0] + "_strokes.json"
                     rec = {
                         "id": stem, "image": key, "preset": preset_name,
                         "svg": out_svg, "preview": preview if os.path.exists(preview) else None,
                         "thumb": thumb if os.path.exists(thumb) else None,
+                        "sidecar": sidecar if os.path.exists(sidecar) else None,
                         "metrics": metrics, "hard_fails": fails,
                         "config": H.config_fingerprint(cfg),
                     }
@@ -231,9 +238,20 @@ class BatchApp:
         dpg.set_value("progress", 0.0)
         dpg.configure_item("btn_run", enabled=False)
         cap = int(dpg.get_value("pen_lift_cap") or 0)
+        single = bool(dpg.get_value("single_path"))
         dpg.set_value("status", f"Running {len(images)}x{len(presets)} "
-                                f"(pen-lift cap {cap or 'preset'}) ...")
-        self.bt.start(presets, images, pen_lift_cap=cap)
+                                f"(pen-lift cap {cap or 'preset'}"
+                                f"{', single-path' if single else ''}) ...")
+        self.bt.start(presets, images, pen_lift_cap=cap, single_path=single)
+
+    def _open_break_tool(self, sender, app_data, user_data):
+        # user_data = sidecar json path; launch the break tool on it (non-blocking)
+        try:
+            subprocess.Popen([sys.executable, os.path.join(H.REPO_ROOT, "tests",
+                                                           "break_tool.py"), user_data])
+            dpg.set_value("status", f"Opened break tool on {os.path.basename(user_data)}")
+        except Exception as e:
+            dpg.set_value("status", f"Break tool failed to launch: {e}")
 
     def on_save(self):
         graded = self.bt.collect_grades(dpg.get_value)
@@ -318,10 +336,15 @@ class BatchApp:
                                                tag=f"score_{rid}_{ax}")
                         dpg.add_input_text(hint="note (optional)", width=320,
                                            tag=f"note_{rid}")
-                        if rec.get("preview"):
-                            dpg.add_button(label="Open full preview",
-                                           user_data=rec["preview"],
-                                           callback=self._open_preview)
+                        with dpg.group(horizontal=True):
+                            if rec.get("preview"):
+                                dpg.add_button(label="Open full preview",
+                                               user_data=rec["preview"],
+                                               callback=self._open_preview)
+                            if rec.get("sidecar"):
+                                dpg.add_button(label="Break tool",
+                                               user_data=rec["sidecar"],
+                                               callback=self._open_break_tool)
 
     # ── queue flush (main thread, every frame) ───────────────────────────────
     def _flush(self):
@@ -363,6 +386,12 @@ class BatchApp:
                                   tag="pen_lift_cap", default_value=0,
                                   min_value=0, step=100, width=160)
                 dpg.add_text("Cricut struggles with many lifts; try 500/1000/2000.",
+                             color=(150, 150, 150))
+            with dpg.group(horizontal=True):
+                dpg.add_checkbox(label="Single path (1 pen lift)", tag="single_path",
+                                 default_value=False)
+                dpg.add_text("collapses all layers into one stroke + writes a "
+                             "break-tool sidecar; use the per-result Break tool button.",
                              color=(150, 150, 150))
             with dpg.group(horizontal=True):
                 dpg.add_button(label="RUN BATCH", tag="btn_run", callback=self.on_run,
