@@ -481,6 +481,11 @@ class HatchConfig:
     stroke_width: float    = 0.55
     stroke_linecap: str    = "round"
     stroke_linejoin: str   = "round"
+    # SVG file-size compression. Coordinates are rounded to svg_decimals places,
+    # trailing zeros stripped, and repeated 'L' commands dropped (implicit
+    # lineto). 1 decimal = ~0.04mm precision at the working resolution — visually
+    # identical for a plotter, ~35-45% smaller files. Set 2 to keep more digits.
+    svg_decimals: int      = 1
 
 
 @dataclass
@@ -1322,6 +1327,41 @@ def _svg_physical_size(img_w: int, img_h: int, cfg: HatchConfig) -> Tuple[float,
     return w_in, h_in
 
 
+def _compress_d(d: str, decimals: int) -> str:
+    """
+    Shrink a path 'd' string losslessly-enough for a plotter:
+      * round coordinates to `decimals` places and strip trailing zeros
+        (123.45 -> 123.5 at 1dp; 0.50 -> 0.5; 123.00 -> 123)
+      * emit implicit lineto: a run of 'L' commands becomes 'L x,y x,y x,y'
+    Geometry is preserved to sub-pixel precision; output stays valid SVG.
+    """
+    if not d:
+        return d
+    toks = d.split()
+    out: List[str] = []
+    last_cmd = None
+    i = 0
+    n = len(toks)
+    while i < n:
+        t = toks[i]
+        if t in ("M", "L") and i + 1 < n:
+            xs, ys = toks[i + 1].split(",")
+            x = round(float(xs), decimals)
+            y = round(float(ys), decimals)
+            coord = f"{x:g},{y:g}"
+            if t == "L" and last_cmd == "L":
+                out.append(coord)                 # implicit lineto
+            else:
+                out.append(t + " " + coord)
+            last_cmd = t
+            i += 2
+        else:
+            out.append(t)
+            last_cmd = None
+            i += 1
+    return " ".join(out)
+
+
 def write_svg(out_path: str, d_strings: List[str],
               img_w: int, img_h: int, cfg: HatchConfig,
               status_cb=None) -> None:
@@ -1332,13 +1372,14 @@ def write_svg(out_path: str, d_strings: List[str],
         viewBox=f"0 0 {img_w} {img_h}",
         profile="tiny",
     )
+    decimals = int(getattr(cfg, "svg_decimals", 1))
     for idx, d in enumerate(d_strings):
         if status_cb and idx % 250 == 0:
             status_cb(f"Writing SVG: {idx}/{len(d_strings)}")
         if not d:
             continue
         dwg.add(dwg.path(
-            d=d, fill="none", stroke="black",
+            d=_compress_d(d, decimals), fill="none", stroke="black",
             stroke_width=cfg.stroke_width,
             stroke_linecap=cfg.stroke_linecap,
             stroke_linejoin=cfg.stroke_linejoin,
@@ -1366,26 +1407,27 @@ def render_preview(d_strings: List[str], img_w: int, img_h: int,
     for d in d_strings:
         tokens  = d.split()
         current = None
+        cmd     = None            # current command; supports implicit lineto
         i       = 0
         while i < len(tokens):
             tok = tokens[i]
-            if tok == "M":
+            if tok in ("M", "L"):
+                cmd = tok
                 i += 1
-                if i < len(tokens):
-                    x, y    = map(float, tokens[i].split(","))
-                    current = (x * scale, y * scale)
-                    i += 1
-            elif tok == "L":
+                continue
+            # a coordinate token, applied under the active command
+            try:
+                x, y = map(float, tok.split(","))
+            except ValueError:
                 i += 1
-                if i < len(tokens):
-                    x, y = map(float, tokens[i].split(","))
-                    pt   = (x * scale, y * scale)
-                    if current is not None:
-                        draw.line([current, pt], fill=(15, 15, 15), width=1)
-                    current = pt
-                    i += 1
-            else:
-                i += 1
+                continue
+            pt = (x * scale, y * scale)
+            if cmd == "L" and current is not None:
+                draw.line([current, pt], fill=(15, 15, 15), width=1)
+            current = pt
+            if cmd == "M":
+                cmd = "L"         # subsequent bare coords after M are lineto
+            i += 1
 
     return im
 
