@@ -89,6 +89,18 @@ PRESETS: Dict[str, HatchConfig] = {
         tonal_adaptive_thresholds=True,
         tonal_dither_floor=0.14,
     ),
+
+    # Single continuous stroke: ALL layers collapsed into ONE path with ONE pen
+    # lift, ordered region-first (fills an area before moving on). Maximally
+    # Cricut-friendly; connectors cross white where the path must travel — those
+    # are removed later by the manual stitch-break tool. Pairs well with the
+    # adaptive tonal fix.
+    "single_path": replace(
+        BASELINE,
+        tonal_single_path=True,
+        tonal_adaptive_thresholds=True,
+        tonal_dither_floor=0.14,
+    ),
 }
 
 

@@ -456,6 +456,17 @@ class HatchConfig:
                                                # the scaling strength ramps 0 -> 1
     tonal_complexity_min_layers: int  = 6      # layer floor at full complexity
     tonal_complexity_area_mult: float = 3.0    # extra min-area gain at full complexity
+    # ── Single-path mode ──────────────────────────────────────────────────────
+    # Collapse ALL tonal layers (and the trace) into ONE continuous path drawn
+    # with a single pen lift. Strokes are ordered region-first: the drawing is
+    # partitioned into square cells (tonal_region_px), the cells swept in a
+    # serpentine order, and within each cell a greedy nearest-neighbour tour
+    # draws every stroke (all angles/layers) before moving on — so the pen
+    # completes an area before travelling elsewhere. Connectors run pen-DOWN
+    # across gaps as needed; the (future) manual stitch-break tool cuts the ones
+    # that show. OFF -> normal 1-path-per-layer output (baseline byte-identical).
+    tonal_single_path: bool    = False
+    tonal_region_px: float     = 64.0   # spatial cell size for region-first ordering
     # Greedy nearest-neighbour stitching to cut pen lifts. Segments within
     # join_mult * spacing connect pen-DOWN (short travel line); farther jumps
     # lift the pen. Larger = fewer lifts but more visible travel moves.
@@ -935,6 +946,74 @@ def stitch_segs_greedy(segs: List[LineString], join_jump: float,
         cur_end = b
         remaining -= 1
 
+    return " ".join(parts)
+
+
+def stitch_single_path(strokes: List[List[Tuple[float, float]]],
+                       w: int, h: int, cell_px: float) -> str:
+    """
+    Collapse many strokes (each a list of (x,y) points) into ONE continuous
+    d-string with a SINGLE pen lift (one leading 'M', everything else 'L').
+
+    Region-first ordering: bucket strokes into square cells of ~cell_px, sweep
+    the cells in a serpentine (boustrophedon) order, and inside each cell run a
+    greedy nearest-neighbour tour over ALL its strokes (every layer/angle). The
+    pen therefore completes one area of the drawing before travelling to the
+    next, minimising long travel connectors. Every connector is drawn pen-DOWN;
+    the manual stitch-break tool removes the ones that show later.
+    """
+    strokes = [s for s in strokes if s and len(s) >= 2]
+    if not strokes:
+        return ""
+    cell = max(8.0, float(cell_px))
+
+    def d2(p, q):
+        return (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2
+
+    # Bucket by centroid cell.
+    buckets: Dict[Tuple[int, int], List[int]] = {}
+    for idx, s in enumerate(strokes):
+        cx = 0.5 * (s[0][0] + s[-1][0])
+        cy = 0.5 * (s[0][1] + s[-1][1])
+        gx = int(cx // cell)
+        gy = int(cy // cell)
+        buckets.setdefault((gy, gx), []).append(idx)
+
+    # Serpentine cell order: rows top->bottom, x alternating direction per row.
+    keys = sorted(buckets.keys())
+    order: List[Tuple[int, int]] = []
+    row_y = None
+    row: List[Tuple[int, int]] = []
+    for k in keys:
+        if k[0] != row_y:
+            if row:
+                order.extend(row if (row_y % 2 == 0) else row[::-1])
+            row_y, row = k[0], []
+        row.append(k)
+    if row:
+        order.extend(row if (row_y % 2 == 0) else row[::-1])
+
+    parts: List[str] = []
+    prev = None
+    for key in order:
+        idxs = buckets[key]
+        while idxs:
+            if prev is None:
+                j = idxs[0]
+            else:
+                # nearest stroke (by its closer endpoint) to the pen position
+                j = min(idxs, key=lambda i: min(d2(prev, strokes[i][0]),
+                                                d2(prev, strokes[i][-1])))
+            idxs.remove(j)
+            s = strokes[j]
+            if prev is not None and d2(prev, s[-1]) < d2(prev, s[0]):
+                s = s[::-1]                      # enter from the nearer end
+            if prev is None:
+                parts.append(f"M {s[0][0]:.2f},{s[0][1]:.2f}")
+            else:
+                parts.append(f"L {s[0][0]:.2f},{s[0][1]:.2f}")   # pen-down connector
+            parts.extend(f"L {x:.2f},{y:.2f}" for x, y in s[1:])
+            prev = s[-1]
     return " ".join(parts)
 
 
@@ -1761,6 +1840,7 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
     spacing = max(1.0, float(cfg.tonal_spacing_px))
 
     all_d: List[str] = []
+    single_strokes: List[List[Tuple[float, float]]] = []  # for single-path mode
     for i, th in enumerate(ths):
         if status_cb: status_cb(f"Tonal layer {i+1}/{layers}…")
         mask = arr_s < float(th)
@@ -1804,6 +1884,12 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             segs.extend(clip_lines_to_polygon(lines, poly))
         if not segs:
             continue
+        if cfg.tonal_single_path:
+            # Collect this layer's strokes; they'll be woven into ONE path later.
+            single_strokes.extend(list(s.coords) for s in segs)
+            if log: log(f"Tonal layer {i+1}: tone<{th:.2f} ang={angle:.0f} "
+                        f"polys={len(polys)} segs={len(segs)} -> collected")
+            continue
         # step 5: 1 layer = 1 path, greedy NN tour to minimise pen lifts
         if cfg.tonal_greedy_stitch:
             d = stitch_segs_greedy(
@@ -1836,7 +1922,10 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
                 if cfg.tonal_trace_holes:
                     for r in p.interiors:
                         rings.append(list(r.coords))
-        if rings:
+        if rings and cfg.tonal_single_path:
+            single_strokes.extend(r for r in rings if len(r) >= 2)
+            if log: log(f"Trace pass: {len(rings)} outlines -> collected")
+        elif rings:
             band = spacing * 4.0
             rings.sort(key=lambda r: (int(r[0][1] // band),
                                       r[0][0] if int(r[0][1] // band) % 2 == 0 else -r[0][0]))
@@ -1849,6 +1938,14 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             if parts:
                 all_d.append(" ".join(parts))
                 if log: log(f"Trace pass: {len(rings)} dark-region outlines -> 1 path")
+
+    # Single-path mode: weave every collected stroke into ONE continuous path.
+    if cfg.tonal_single_path:
+        if status_cb: status_cb("Tonal: weaving single continuous path…")
+        d = stitch_single_path(single_strokes, w, h, float(cfg.tonal_region_px))
+        all_d = [d] if d else []
+        if log: log(f"Single-path: {len(single_strokes)} strokes -> "
+                    f"1 path, {d.count('M ') if d else 0} pen lift(s)")
 
     if not all_d:
         all_d = ["M 0,0 L 0,0"]
