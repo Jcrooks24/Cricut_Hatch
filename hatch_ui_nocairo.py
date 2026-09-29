@@ -967,24 +967,29 @@ def stitch_single_path(strokes: List[List[Tuple[float, float]]],
     next, minimising long travel connectors. Every connector is drawn pen-DOWN;
     the manual stitch-break tool removes the ones that show later.
     """
-    strokes = [s for s in strokes if s and len(s) >= 2]
+    return strokes_to_single_d(order_strokes_region_first(strokes, w, h, cell_px))
+
+
+def order_strokes_region_first(strokes, w, h, cell_px):
+    """Order + orient strokes region-first: bucket into serpentine-swept square
+    cells (cell_px), greedy nearest-neighbour tour within each cell, so the pen
+    completes one area before travelling on. Returns the ordered, oriented list
+    of strokes (each a list of (x, y)). This is the connector-tagging enabler:
+    connector k is the gap ordered[k].end -> ordered[k+1].start."""
+    strokes = [list(s) for s in strokes if s and len(s) >= 2]
     if not strokes:
-        return ""
+        return []
     cell = max(8.0, float(cell_px))
 
     def d2(p, q):
         return (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2
 
-    # Bucket by centroid cell.
     buckets: Dict[Tuple[int, int], List[int]] = {}
     for idx, s in enumerate(strokes):
         cx = 0.5 * (s[0][0] + s[-1][0])
         cy = 0.5 * (s[0][1] + s[-1][1])
-        gx = int(cx // cell)
-        gy = int(cy // cell)
-        buckets.setdefault((gy, gx), []).append(idx)
+        buckets.setdefault((int(cy // cell), int(cx // cell)), []).append(idx)
 
-    # Serpentine cell order: rows top->bottom, x alternating direction per row.
     keys = sorted(buckets.keys())
     order: List[Tuple[int, int]] = []
     row_y = None
@@ -998,7 +1003,7 @@ def stitch_single_path(strokes: List[List[Tuple[float, float]]],
     if row:
         order.extend(row if (row_y % 2 == 0) else row[::-1])
 
-    parts: List[str] = []
+    ordered: List[List[Tuple[float, float]]] = []
     prev = None
     for key in order:
         idxs = buckets[key]
@@ -1006,19 +1011,29 @@ def stitch_single_path(strokes: List[List[Tuple[float, float]]],
             if prev is None:
                 j = idxs[0]
             else:
-                # nearest stroke (by its closer endpoint) to the pen position
                 j = min(idxs, key=lambda i: min(d2(prev, strokes[i][0]),
                                                 d2(prev, strokes[i][-1])))
             idxs.remove(j)
             s = strokes[j]
             if prev is not None and d2(prev, s[-1]) < d2(prev, s[0]):
                 s = s[::-1]                      # enter from the nearer end
-            if prev is None:
-                parts.append(f"M {s[0][0]:.2f},{s[0][1]:.2f}")
-            else:
-                parts.append(f"L {s[0][0]:.2f},{s[0][1]:.2f}")   # pen-down connector
-            parts.extend(f"L {x:.2f},{y:.2f}" for x, y in s[1:])
+            ordered.append(s)
             prev = s[-1]
+    return ordered
+
+
+def strokes_to_single_d(ordered, broken=None):
+    """Build a d-string from ordered strokes. Each stroke joins the previous one
+    pen-DOWN ('L' to its start) => one pen lift total. If `broken` is given (a
+    set of connector indices, where connector k precedes stroke k+1), those
+    joins become pen-UP ('M') instead — one extra pen lift each. This is how the
+    manual stitch-break tool cuts connectors that show."""
+    broken = broken or set()
+    parts: List[str] = []
+    for k, s in enumerate(ordered):
+        lift = (k == 0) or ((k - 1) in broken)
+        parts.append(("M " if lift else "L ") + f"{s[0][0]:.2f},{s[0][1]:.2f}")
+        parts.extend(f"L {x:.2f},{y:.2f}" for x, y in s[1:])
     return " ".join(parts)
 
 
@@ -1981,13 +1996,26 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
                 all_d.append(" ".join(parts))
                 if log: log(f"Trace pass: {len(rings)} dark-region outlines -> 1 path")
 
-    # Single-path mode: weave every collected stroke into ONE continuous path.
+    # Single-path mode: weave every collected stroke into ONE continuous path,
+    # and write a sidecar JSON of the ordered strokes so the manual stitch-break
+    # tool can identify/cut the connectors between them.
     if cfg.tonal_single_path:
         if status_cb: status_cb("Tonal: weaving single continuous path…")
-        d = stitch_single_path(single_strokes, w, h, float(cfg.tonal_region_px))
+        ordered = order_strokes_region_first(
+            single_strokes, w, h, float(cfg.tonal_region_px))
+        d = strokes_to_single_d(ordered)
         all_d = [d] if d else []
-        if log: log(f"Single-path: {len(single_strokes)} strokes -> "
-                    f"1 path, {d.count('M ') if d else 0} pen lift(s)")
+        try:
+            import json as _json
+            side = os.path.splitext(out_svg_path)[0] + "_strokes.json"
+            with open(side, "w") as _f:
+                _json.dump({"width": w, "height": h,
+                            "strokes": [[[round(px, 1), round(py, 1)]
+                                         for px, py in s] for s in ordered]}, _f)
+        except Exception as _e:
+            if log: log(f"strokes sidecar error: {_e}")
+        if log: log(f"Single-path: {len(single_strokes)} strokes -> 1 path "
+                    f"(+ _strokes.json sidecar)")
 
     if not all_d:
         all_d = ["M 0,0 L 0,0"]
