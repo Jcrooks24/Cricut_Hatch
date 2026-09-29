@@ -395,6 +395,15 @@ class HatchConfig:
     tonal_angle_step: float    = 40.0   # angle offset per layer (step 6)
     tonal_blur_px: float       = 2.0
     tonal_min_area_px2: float  = 30.0
+    # ── Spatially-varying min-area (adaptive) ─────────────────────────────────
+    # When enabled, replace the single tonal_min_area_px2 filter with a per-polygon
+    # threshold interpolated from a DETAIL map (local high-frequency energy of the
+    # working tone). Detailed foreground (studs/laces/eyelets) keeps a low min-area
+    # so fine texture survives; flat ground gets a high min-area so speckle is culled.
+    tonal_adaptive_min_area: bool  = False   # OFF -> global tonal_min_area_px2 (unchanged)
+    tonal_min_area_detail: float   = 8.0     # min-area where detail is HIGH (foreground)
+    tonal_min_area_flat: float     = 90.0    # min-area where detail is LOW (flat ground)
+    tonal_detail_blur_px: float    = 24.0    # blur radius for the high-freq detail map
     # Tone-curve before thresholding. <1 lifts mid/light tones so they fall into
     # fewer layers (lighter overall) while pure blacks stay dark — keeps 10-layer
     # depth without the whole image going too dark. 1.0 = linear (no change).
@@ -403,6 +412,24 @@ class HatchConfig:
     # the hard contour banding between adjacent pass-counts into a stipple.
     # 0 = off; ~1.0 = full step.
     tonal_dither: float        = 0.0
+    # Tone-floor dither suppression. When >0, the dither amplitude is scaled per
+    # pixel by a smooth ramp using the CLEAN (pre-dither) tone: 0 below this floor
+    # (deep shadows stay solid) ramping to full by ~floor+0.08, so true blacks
+    # lose their speckle while mid/light tones keep their anti-banding stipple.
+    # 0.0 = off (dither applied uniformly, as before).
+    tonal_dither_floor: float  = 0.0
+    # ── Quantile / adaptive layer thresholds ──────────────────────────────────
+    # By default the layer thresholds are linspace(tonal_hi, tonal_lo, layers).
+    # For images whose tonal mass is clustered (near-all-black low-key portraits,
+    # bimodal plastic) that wastes layers on empty tone ranges and dumps the whole
+    # clustered mass below every threshold -> all layers -> near-solid. When
+    # enabled, derive the thresholds from the QUANTILES of the post-gamma,
+    # pre-dither tone over non-highlight pixels (tone < tonal_hi) at evenly spaced
+    # quantile levels, so layers concentrate where the tonal mass actually lives.
+    # OFF -> pure linspace (unchanged baseline).
+    tonal_adaptive_thresholds: bool  = False
+    # Blend factor between the quantile thresholds (1.0) and the linear ones (0.0).
+    tonal_adaptive_blend: float      = 1.0
     # Final pass: outline the darkest regions for crisp definition (drawn on top
     # of the shading). Only dark regions are traced — outlining light regions
     # looks odd. One extra path.
@@ -410,6 +437,25 @@ class HatchConfig:
     tonal_trace_layers: int    = 2       # outline the darkest N layers' regions
     tonal_trace_min_area_px2: float = 200.0  # only trace significant masses
     tonal_trace_holes: bool    = True    # also outline interior holes
+    # ── Scene-complexity auto-scaling ─────────────────────────────────────────
+    # Busy scenes (dense edges / texture, e.g. a crowded market) fragment into
+    # thousands of tiny regions, exploding path/lift counts and cluttering the
+    # result. When enabled, a complexity score (edge/gradient density of the
+    # working tone, normalised 0..1) is computed ONCE at the start of run_tonal;
+    # if it exceeds tonal_complexity_threshold the EFFECTIVE render params for
+    # THIS render are scaled toward simpler output, PROPORTIONALLY to the score
+    # (cfg itself is never mutated):
+    #   * min-area filters raised (global + adaptive detail/flat) -> cull speckle
+    #   * tonal_max_layers lowered toward tonal_complexity_min_layers
+    #   * tonal_dither pushed toward 0
+    # OFF -> no score computed, params untouched (baseline byte-identical).
+    tonal_auto_complexity: bool       = False
+    tonal_complexity_edge_thr: float  = 0.06   # |gradient| above this = a "detail" pixel
+    tonal_complexity_threshold: float = 0.25   # score onset; below this -> no scaling
+    tonal_complexity_span: float      = 0.12   # score range above onset over which
+                                               # the scaling strength ramps 0 -> 1
+    tonal_complexity_min_layers: int  = 6      # layer floor at full complexity
+    tonal_complexity_area_mult: float = 3.0    # extra min-area gain at full complexity
     # Greedy nearest-neighbour stitching to cut pen lifts. Segments within
     # join_mult * spacing connect pen-DOWN (short travel line); farther jumps
     # lift the pen. Larger = fewer lifts but more visible travel moves.
@@ -1577,6 +1623,56 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
     h, w = arr.shape
     bounds = (0.0, 0.0, float(w), float(h))
 
+    # ── Scene-complexity auto-scaling (self-contained, additive) ──────────────
+    # Compute a complexity score for the working tone and, if the scene is busy,
+    # scale the EFFECTIVE render params for THIS render only by rebinding the
+    # local `cfg` to a scaled copy. All downstream blocks (adaptive-min-area,
+    # dither, layer count, global min-area) then transparently read the scaled
+    # values. `cfg` is a @dataclass; replace() returns a NEW instance, so the
+    # caller's cfg is never mutated. When the flag is OFF this block is skipped
+    # entirely and cfg is untouched -> baseline byte-identical.
+    if cfg.tonal_auto_complexity:
+        from dataclasses import replace as _dc_replace
+        # Complexity = edge/gradient density: the fraction of pixels whose local
+        # gradient magnitude exceeds tonal_complexity_edge_thr. High for busy,
+        # textured scenes (a crowded market); ~0 for smooth low-contrast
+        # portraits. Already a fraction, so inherently normalised to 0..1.
+        _gy, _gx = np.gradient(arr.astype(np.float32))
+        _gmag = np.sqrt(_gx * _gx + _gy * _gy)
+        _score = float(np.mean(_gmag > float(cfg.tonal_complexity_edge_thr)))
+        _score = max(0.0, min(1.0, _score))
+        _thr = float(cfg.tonal_complexity_threshold)
+        if _score > _thr:
+            # Proportional strength s: 0 at the onset threshold, ramping to 1
+            # across tonal_complexity_span of score above it (then saturating).
+            _span = max(1e-6, float(cfg.tonal_complexity_span))
+            _s = max(0.0, min(1.0, (_score - _thr) / _span))
+            _area_mult   = 1.0 + _s * float(cfg.tonal_complexity_area_mult)
+            _min_layers  = int(cfg.tonal_complexity_min_layers)
+            _base_layers = int(cfg.tonal_max_layers)
+            _eff_layers  = int(round(_base_layers - _s * (_base_layers - _min_layers)))
+            _eff_layers  = max(_min_layers, min(_base_layers, _eff_layers))
+            _base_dither = float(cfg.tonal_dither)
+            _eff_dither  = _base_dither * (1.0 - _s)
+            cfg = _dc_replace(
+                cfg,
+                tonal_min_area_px2    = float(cfg.tonal_min_area_px2)    * _area_mult,
+                tonal_min_area_detail = float(cfg.tonal_min_area_detail) * _area_mult,
+                tonal_min_area_flat   = float(cfg.tonal_min_area_flat)   * _area_mult,
+                tonal_max_layers      = _eff_layers,
+                tonal_dither          = _eff_dither,
+            )
+            if log:
+                log(f"Auto-complexity: score={_score:.3f} > thr={_thr:.2f} "
+                    f"(s={_s:.2f}) -> min_area x{_area_mult:.2f}, "
+                    f"layers {_base_layers}->{_eff_layers}, "
+                    f"dither {_base_dither:.2f}->{_eff_dither:.2f}")
+        else:
+            if log:
+                log(f"Auto-complexity: score={_score:.3f} <= thr={_thr:.2f} "
+                    f"-> no scaling (params unchanged)")
+    # ---------------------------------------------------------------------------
+
     arr_s = arr
     if cfg.tonal_blur_px > 0:
         arr_s = np.asarray(
@@ -1594,6 +1690,22 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
     # Clean (pre-dither) tone for the trace pass, so outlines aren't speckled.
     arr_clean = arr_s.copy()
 
+    # ── Adaptive min-area: detail map (computed ONCE) ─────────────────────────
+    # DETAIL = local high-frequency energy of the working tone, i.e. how far the
+    # tone deviates from its own gaussian-blurred (low-frequency) version. High
+    # in textured foreground (sole studs, laces, eyelets), ~0 on flat ground.
+    # Normalised 0..1. Used later to pick a per-polygon min-area threshold.
+    detail_map = None
+    if cfg.tonal_adaptive_min_area:
+        lo_freq = np.asarray(
+            Image.fromarray((np.clip(arr_clean, 0, 1) * 255).astype(np.uint8))
+                 .filter(ImageFilter.GaussianBlur(float(cfg.tonal_detail_blur_px)))
+        ).astype(np.float32) / 255.0
+        hf = np.abs(arr_clean - lo_freq)
+        mx = float(hf.max())
+        detail_map = (hf / mx) if mx > 1e-6 else np.zeros_like(hf)
+    # ---------------------------------------------------------------------------
+
     # Ordered dither: nudge each pixel's tone by up to +/- half a threshold step
     # using a tiled Bayer matrix, so the hard boundary between k and k+1 passes
     # becomes a stippled transition instead of a visible contour band.
@@ -1602,10 +1714,50 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
         bayer = _bayer_matrix(8) - 0.5                       # -0.5..+0.5, deterministic
         th, tw = arr_s.shape
         tile = np.tile(bayer, (th // 8 + 1, tw // 8 + 1))[:th, :tw]
-        arr_s = np.clip(arr_s + tile * step * float(cfg.tonal_dither), 0.0, 1.0)
+        dither = tile * step * float(cfg.tonal_dither)
+        # --- tone-floor dither suppression -------------------------------------
+        # Gate the dither by a smooth ramp on the CLEAN (pre-dither) tone so deep
+        # shadows stay solid (no speckle) while mid/light tones keep the stipple.
+        # amp = 0 for clean tone < floor, ramps smoothly to 1 by floor+0.08.
+        floor = float(cfg.tonal_dither_floor)
+        if floor > 0.0:
+            width = 0.08
+            t = np.clip((arr_clean - floor) / width, 0.0, 1.0)
+            amp = t * t * (3.0 - 2.0 * t)   # smoothstep 0->1
+            dither = dither * amp
+        # -----------------------------------------------------------------------
+        arr_s = np.clip(arr_s + dither, 0.0, 1.0)
     # Nested thresholds: a pixel darker than ths[i] receives layer i. Darker
     # pixels pass more thresholds -> more layers -> darker (steps 3-4).
     ths = np.linspace(float(cfg.tonal_hi), float(cfg.tonal_lo), layers)
+    # ── Quantile / adaptive layer thresholds ──────────────────────────────────
+    # Self-contained, additive: when enabled, replace (or blend into) the linear
+    # thresholds above with quantiles of the working tone so layers cluster where
+    # the tonal mass is, instead of being evenly spread over empty tone ranges.
+    #  * sample = post-gamma, pre-dither tone (arr_clean) over NON-highlight pixels
+    #    (tone < tonal_hi), so highlights don't skew the shadow/mid distribution.
+    #  * quantile levels are evenly spaced and descend hi->lo to mirror linspace
+    #    (ths[0] = lightest threshold, ths[-1] = darkest).
+    #  * blend with the linear thresholds by tonal_adaptive_blend (1.0 = pure
+    #    quantile, 0.0 = pure linear), then clamp into [tonal_lo, tonal_hi].
+    #  * CRITICAL: enforce strict monotonic separation (a tiny epsilon between
+    #    adjacent thresholds) so collapsed/duplicate quantiles (common when the
+    #    mass is heavily clustered) cannot create empty or inverted layers — this
+    #    was a known past bug.
+    if cfg.tonal_adaptive_thresholds and layers > 1:
+        hi = float(cfg.tonal_hi); lo = float(cfg.tonal_lo)
+        sample = arr_clean[arr_clean < hi]
+        if sample.size > 0:
+            qlevels = np.linspace(1.0, 0.0, layers)      # descending -> hi..lo order
+            q_ths = np.quantile(sample, qlevels)
+            blend = float(cfg.tonal_adaptive_blend)
+            ths = blend * q_ths + (1.0 - blend) * ths
+            ths = np.clip(ths, lo, hi)
+            eps = 1e-4                                   # strict separation gap
+            for _i in range(1, len(ths)):
+                if ths[_i] >= ths[_i - 1] - eps:
+                    ths[_i] = ths[_i - 1] - eps
+    # ---------------------------------------------------------------------------
     spacing = max(1.0, float(cfg.tonal_spacing_px))
 
     all_d: List[str] = []
@@ -1617,9 +1769,32 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
         mask[:, 0] = mask[:, -1] = False
         if mask.sum() == 0:
             continue
-        polys = mask_to_polygons(mask, cfg,                       # steps 1-2
-                                 min_area=float(cfg.tonal_min_area_px2),
-                                 simplify_tol=cfg.simplify_tolerance_px)
+        # ── Adaptive min-area filtering ──────────────────────────────────────
+        # When enabled, polygonize with a SMALL min-area (drop nothing early),
+        # then keep each polygon whose area >= a threshold interpolated from the
+        # detail map at its centroid: high detail -> tonal_min_area_detail,
+        # flat -> tonal_min_area_flat. Otherwise fall back to the global filter.
+        if cfg.tonal_adaptive_min_area and detail_map is not None:
+            a_detail = float(cfg.tonal_min_area_detail)
+            a_flat   = float(cfg.tonal_min_area_flat)
+            small    = max(0.0, min(a_detail, a_flat))   # never pre-drop a keepable poly
+            raw = mask_to_polygons(mask, cfg,
+                                   min_area=small,
+                                   simplify_tol=cfg.simplify_tolerance_px)
+            polys = []
+            for poly in raw:
+                c  = poly.centroid
+                cx = int(min(max(c.x, 0.0), w - 1))
+                cy = int(min(max(c.y, 0.0), h - 1))
+                d  = float(detail_map[cy, cx])           # 0..1, high => detailed
+                thr = a_flat + d * (a_detail - a_flat)   # lerp flat->detail
+                if poly.area >= thr:
+                    polys.append(poly)
+        else:
+            polys = mask_to_polygons(mask, cfg,                   # steps 1-2
+                                     min_area=float(cfg.tonal_min_area_px2),
+                                     simplify_tol=cfg.simplify_tolerance_px)
+        # ---------------------------------------------------------------------
         if not polys:
             continue
         angle = float(cfg.tonal_base_angle) + float(cfg.tonal_angle_step) * i  # step 6

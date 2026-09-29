@@ -57,9 +57,38 @@ BASELINE = replace(
 PRESETS: Dict[str, HatchConfig] = {
     "baseline": BASELINE,
 
-    # Add experiment presets here, e.g.:
-    # "layers6": replace(BASELINE, tonal_max_layers=6),
-    # "denser":  replace(BASELINE, tonal_spacing_px=3.5),
+    # ── New adaptive features (from the ultracode implementation pass) ─────────
+    # All default OFF in HatchConfig, so `baseline` is unchanged. These presets
+    # turn them on so you can A/B them in the cockpit and decide what to promote.
+
+    # RECOMMENDED upgrade: quantile/adaptive thresholds place the tonal layers
+    # where each image's tonal mass actually is — dramatically fixes the low-key
+    # over-fill (the near-solid dark portrait becomes a readable face) with no
+    # regression on normal images. + dither-floor keeps true blacks solid.
+    "adaptive": replace(
+        BASELINE,
+        tonal_adaptive_thresholds=True,
+        tonal_dither_floor=0.14,
+    ),
+
+    # Crisp texture: spatially-varying min-area keeps detailed foreground sharp
+    # while de-speckling flat dark grounds. NOTE: slow / heavy on very detailed
+    # images (explodes polygon count) — opt-in per image, not a default.
+    "texture": replace(
+        BASELINE,
+        tonal_adaptive_min_area=True,
+        tonal_adaptive_thresholds=True,
+        tonal_dither_floor=0.14,
+    ),
+
+    # Busy-scene taming: auto-scales min-area up / layers down / dither off when
+    # the scene is complex; a no-op on normal images (verified identical output).
+    "auto": replace(
+        BASELINE,
+        tonal_auto_complexity=True,
+        tonal_adaptive_thresholds=True,
+        tonal_dither_floor=0.14,
+    ),
 }
 
 
