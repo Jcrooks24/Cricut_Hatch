@@ -1242,14 +1242,16 @@ def run_linespacing(png_path: str, arr: np.ndarray, cfg: HatchConfig,
     simp = float(cfg.simplify_tolerance_px)
     min_len = float(cfg.ls_min_len)
     strokes: List[List[Tuple[float, float]]] = []
+    all_d: List[str] = []
 
     if cfg.ls_straight:
-        # STRAIGHT parallel lines: one global grid at `step`; each darkness band
-        # keeps every Nth line (dense in shadows, sparse in highlights). Lines are
-        # drawn from the SAME grid so spacing is always aligned (no drift/drips).
-        if status_cb: status_cb("Line-spacing: straight bands…")
+        # STRAIGHT line-screen. Each darkness band (layer) gets its OWN spacing,
+        # allocated independently from its darkness; then EACH polygon's lines are
+        # stitched into their OWN single continuous path (1 polygon = 1 path).
+        # This is deliberately different from the single-path baseline, which
+        # collapses the whole drawing into one stroke.
+        if status_cb: status_cb("Line-screen: per-polygon lines…")
         bounds = (0.0, 0.0, float(w), float(h))
-        grid = make_parallel_lines(bounds, step, angle, phase=0.0)
         bands = max(1, int(cfg.ls_bands))
         if cfg.ls_adaptive:
             # band edges from the image's own darkness quantiles -> each band holds
@@ -1264,6 +1266,8 @@ def run_linespacing(png_path: str, arr: np.ndarray, cfg: HatchConfig,
                 edges = np.linspace(0.12, 0.95, bands + 1)
         else:
             edges = np.linspace(0.12, 0.95, bands + 1)
+        step_min = step                               # tightest spacing (darkest band)
+        step_max = step * max(1, int(cfg.ls_max_stride))   # widest (lightest band)
         for bi in range(bands):
             d_lo = float(edges[bi])
             d_hi = float(edges[bi + 1]) if bi < bands - 1 else 1.01
@@ -1272,22 +1276,23 @@ def run_linespacing(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             mask[:, 0] = mask[:, -1] = False
             if mask.sum() == 0:
                 continue
-            polys = mask_to_polygons(mask, cfg, min_area=float(cfg.tonal_min_area_px2),
+            rank_dark = bi / max(1, bands - 1)        # 0 lightest .. 1 darkest
+            spacing_b = step_max - (step_max - step_min) * rank_dark   # independent per band
+            polys = mask_to_polygons(mask, cfg,
+                                     min_area=float(cfg.tonal_min_area_px2),
                                      simplify_tol=simp)
-            if not polys:
-                continue
-            # stride by band RANK: lightest band -> max_stride (sparse), darkest
-            # band -> 1 (dense). Full density range regardless of image contrast.
-            stride = max(1, int(round(cfg.ls_max_stride *
-                                      (bands - 1 - bi) / max(1, bands - 1))))
-            for ln in grid[::stride]:
-                for poly in polys:
-                    for seg in clip_lines_to_polygon([ln], poly):
-                        cs = list(seg.coords)
-                        if len(cs) >= 2:
-                            strokes.append(cs)
-        if log: log(f"Line-spacing STRAIGHT: {bands} bands, {len(grid)} grid lines "
-                    f"-> {len(strokes)} segments (step={step}, angle={angle:.0f})")
+            lines = make_parallel_lines(bounds, spacing_b, angle, phase=0.0)
+            for poly in polys:
+                segs = clip_lines_to_polygon(lines, poly)
+                if not segs:
+                    continue
+                # one polygon's lines -> one continuous path (boustrophedon)
+                d = stitch_segs_greedy(segs, spacing_b * 1.5, mask=None,
+                                       short_join=spacing_b * 1.5)
+                if d:
+                    all_d.append(d)
+        if log: log(f"Line-screen: {bands} bands (independent spacing) -> "
+                    f"{len(all_d)} per-polygon paths (angle={angle:.0f})")
     else:
         # FLOWING contours of the cumulative darkness field.
         if float(cfg.ls_dark_cap) < 1.0:
@@ -1329,12 +1334,7 @@ def run_linespacing(png_path: str, arr: np.ndarray, cfg: HatchConfig,
                     f"strokes (step={step}, angle={angle:.0f}, cap={cfg.ls_dark_cap})")
 
     if cfg.ls_straight:
-        # Straight segments: boustrophedon with pen-UPS across gaps — adjacent
-        # parallel lines connect pen-down, everything else lifts. No long
-        # cross-connectors (those only make sense for continuous flowing strokes).
-        segs = [LineString(s) for s in strokes if len(s) >= 2]
-        d = stitch_segs_greedy(segs, step * 1.5, mask=None, short_join=step * 1.5)
-        all_d = [d] if d else []
+        pass                        # all_d already built per-polygon above
     elif cfg.ls_single_path:
         # Flowing: one continuous path (+ break-tool sidecar).
         ordered = order_strokes_region_first(strokes, w, h, float(cfg.tonal_region_px))

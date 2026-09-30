@@ -103,11 +103,12 @@ PRESETS: Dict[str, HatchConfig] = {
     ),
 
     # METHODOLOGY 2: variable-spacing STRAIGHT parallel lines (line-screen /
-    # engraving). Darkness -> local line density: one global grid of parallel
-    # lines, each tonal band keeps every Nth line (dense in shadows, sparse in
-    # highlights). Adaptive (quantile) band edges auto-fit each image's contrast.
-    # Clean and consistent across subjects. ls_angle rotates the lines; ls_step is
-    # the tightest spacing; ls_bands / ls_max_stride set the density range.
+    # engraving). Darkness -> line density. Each darkness band (layer) gets its
+    # OWN spacing (allocated independently from its darkness), and EACH polygon's
+    # lines are stitched into their OWN single continuous path (1 polygon = 1 path)
+    # — distinct from the single-path baseline. Adaptive (quantile) band edges
+    # auto-fit contrast. ls_angle rotates the lines; ls_step = tightest spacing
+    # (darkest band); ls_bands / ls_max_stride set the density range.
     "line_screen": replace(
         BASELINE,
         line_spacing=True, ls_straight=True,
