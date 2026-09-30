@@ -71,13 +71,15 @@ class BatchTester:
         self.running = False
 
     # ── batch generation (worker thread) ─────────────────────────────────────
-    def start(self, preset_names, image_paths, pen_lift_cap=0, single_path=False):
+    def start(self, preset_names, image_paths, pen_lift_cap=0, single_path=False,
+              levels=0):
         if self.running:
             return
         self.running = True
         self.results = []
         self.pen_lift_cap = pen_lift_cap
         self.single_path = single_path
+        self.levels = levels
         self.run_label = f"batch_{H.now_stamp()}"
         t = threading.Thread(target=self._run, args=(preset_names, image_paths),
                              daemon=True)
@@ -93,6 +95,11 @@ class BatchTester:
             # Live override of the pen-lift cap from the cockpit (0 = use preset).
             if getattr(self, "pen_lift_cap", 0) > 0:
                 cfg = replace(cfg, max_pen_lifts=int(self.pen_lift_cap))
+            # Exact darkness-level count (0 = preset). For flat-tone / graphic
+            # images set this to the real number of tones so the method doesn't
+            # invent levels that aren't there.
+            if getattr(self, "levels", 0) > 0:
+                cfg = replace(cfg, tonal_max_layers=int(self.levels))
             # Live single-path override: one continuous stroke + a break-tool sidecar.
             if getattr(self, "single_path", False):
                 cfg = replace(cfg, tonal_single_path=True)
@@ -239,10 +246,13 @@ class BatchApp:
         dpg.configure_item("btn_run", enabled=False)
         cap = int(dpg.get_value("pen_lift_cap") or 0)
         single = bool(dpg.get_value("single_path"))
+        levels = int(dpg.get_value("levels") or 0)
         dpg.set_value("status", f"Running {len(images)}x{len(presets)} "
                                 f"(pen-lift cap {cap or 'preset'}"
+                                f"{', %d levels' % levels if levels else ''}"
                                 f"{', single-path' if single else ''}) ...")
-        self.bt.start(presets, images, pen_lift_cap=cap, single_path=single)
+        self.bt.start(presets, images, pen_lift_cap=cap, single_path=single,
+                      levels=levels)
 
     def _open_break_tool(self, sender, app_data, user_data):
         # user_data = sidecar json path; launch the break tool on it (non-blocking)
@@ -386,6 +396,13 @@ class BatchApp:
                                   tag="pen_lift_cap", default_value=0,
                                   min_value=0, step=100, width=160)
                 dpg.add_text("Cricut struggles with many lifts; try 500/1000/2000.",
+                             color=(150, 150, 150))
+            with dpg.group(horizontal=True):
+                dpg.add_input_int(label="Darkness levels (0 = use preset)",
+                                  tag="levels", default_value=0,
+                                  min_value=0, max_value=20, step=1, width=160)
+                dpg.add_text("flat-tone / graphic images: set the real # of tones "
+                             "(e.g. 3-5) so levels aren't invented.",
                              color=(150, 150, 150))
             with dpg.group(horizontal=True):
                 dpg.add_checkbox(label="Single path (1 pen lift)", tag="single_path",
