@@ -33,7 +33,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness as H
 from hatch_ui_nocairo import HatchConfig, strokes_to_single_d, write_svg, render_preview
 
-DISP_MAX = 900   # base display dimension (zoom in for detail)
+DISP_MAX = 900         # base display dimension (zoom in for detail)
+RADIUS_SCREEN = 12.0   # click / paint hit radius in screen px
+MOVE_THRESH = 6.0      # px of travel before a left gesture counts as a drag
 
 
 # ── non-GUI logic (importable / testable) ──────────────────────────────────────
@@ -97,8 +99,9 @@ class BreakApp:
         self._moved = False
         self._ldown = False          # left gesture in progress
         self._mdown = False          # middle (pan) gesture in progress
-        self._space = False          # Space held -> pan modifier
         self._gesture_pan = False    # current left gesture is a pan (Space at press)
+        self._space_key = getattr(dpg, "mvKey_Spacebar",
+                                  getattr(dpg, "mvKey_Space", 32))
 
     def _candidates(self):
         return [c for c in self.conns if c[3] >= self.min_len]
@@ -110,16 +113,18 @@ class BreakApp:
         return (ix * self.scale * self.zoom + self.pan[0],
                 iy * self.scale * self.zoom + self.pan[1])
 
-    def _mouse_to_image(self, mx, my):
-        """Screen mouse pos -> image-space (px), inverting drawlist/pan/zoom/scale."""
-        try:
-            ox, oy = dpg.get_item_rect_min("dl")
-        except Exception:
+    def _draw_mouse(self):
+        """Mouse position in drawlist-local coords, or None if off the canvas.
+        Uses DPG's purpose-built drawlist hit-test (no fragile rect math)."""
+        dmx, dmy = dpg.get_drawing_mouse_pos()
+        if not (0 <= dmx <= self.dw and 0 <= dmy <= self.dh):
             return None
-        lx, ly = mx - ox, my - oy                       # drawlist-local screen px
-        dx = (lx - self.pan[0]) / self.zoom             # display px
-        dy = (ly - self.pan[1]) / self.zoom
-        return dx / self.scale, dy / self.scale, lx, ly
+        return dmx, dmy
+
+    def _img_from_draw(self, dmx, dmy):
+        """Drawlist-local coords -> image-space px (invert baked pan/zoom/scale)."""
+        return ((dmx - self.pan[0]) / (self.scale * self.zoom),
+                (dmy - self.pan[1]) / (self.scale * self.zoom))
 
     # ── scene build / redraw ──────────────────────────────────────────────────
     def _draw_scene(self):
@@ -160,33 +165,24 @@ class BreakApp:
                 best, bestd = k, d
         return best
 
+    def _hit_radius(self):
+        return RADIUS_SCREEN / (self.zoom * self.scale)   # screen px -> image px
+
     # ── mouse handlers ────────────────────────────────────────────────────────
     def on_wheel(self, sender, app_data):
-        mp = dpg.get_mouse_pos(local=False)
-        conv = self._mouse_to_image(*mp)
-        if conv is None:
+        dm = self._draw_mouse()
+        if dm is None:
             return
-        _, _, lx, ly = conv
-        if not (0 <= lx <= self.dw and 0 <= ly <= self.dh):
-            return
-        factor = 1.15 if app_data > 0 else 1.0 / 1.15
-        old, new = self.zoom, max(0.5, min(30.0, self.zoom * factor))
-        disp_x = (lx - self.pan[0]) / old
-        disp_y = (ly - self.pan[1]) / old
-        self.pan[0] = lx - new * disp_x                 # keep point under cursor fixed
-        self.pan[1] = ly - new * disp_y
+        lx, ly = dm
+        old = self.zoom
+        new = max(0.5, min(30.0, old * (1.15 if app_data > 0 else 1.0 / 1.15)))
+        r = new / old
+        self.pan[0] = lx - r * (lx - self.pan[0])         # keep point under cursor fixed
+        self.pan[1] = ly - r * (ly - self.pan[1])
         self.zoom = new
         self._draw_scene()
-        self._update_status()
 
-    # Space bar held -> a pan modifier (left-drag pans instead of breaking).
-    def on_space_down(self, sender, app_data):
-        self._space = True
-
-    def on_space_up(self, sender, app_data):
-        self._space = False
-
-    # Middle-mouse drag = pan (always). Left-drag with Space held = pan too.
+    # Middle-mouse drag = pan (always).
     def on_mid_down(self, sender, app_data):
         if not self._mdown:
             self._mdown = True
@@ -205,45 +201,38 @@ class BreakApp:
         if not self._ldown:            # first frame of the gesture only
             self._ldown = True
             self._moved = False
-            self._gesture_pan = self._space      # lock gesture type at press
+            self._gesture_pan = dpg.is_key_down(self._space_key)  # Space = pan
             self._pan0 = list(self.pan)
 
     def on_left_drag(self, sender, app_data):
         _, ddx, ddy = app_data
-        if abs(ddx) + abs(ddy) > 3:
+        if abs(ddx) + abs(ddy) > MOVE_THRESH:
             self._moved = True
         if self._gesture_pan:                    # Space held at press -> pan
             self.pan[0] = self._pan0[0] + ddx
             self.pan[1] = self._pan0[1] + ddy
             self._draw_scene()
             return
-        mp = dpg.get_mouse_pos(local=False)
-        conv = self._mouse_to_image(*mp)
-        if conv is None:
+        if not self._moved:                      # ignore click jitter; paint only on real drag
             return
-        ix, iy, lx, ly = conv
-        if not (0 <= lx <= self.dw and 0 <= ly <= self.dh):
+        dm = self._draw_mouse()
+        if dm is None:
             return
-        radius = 9.0 / (self.zoom * self.scale)         # ~9 screen px, in image px
-        k = self._nearest_connector(ix, iy, radius)
+        k = self._nearest_connector(*self._img_from_draw(*dm), self._hit_radius())
         if k is not None and k not in self.broken:
-            self._set_broken(k, True)                   # paint-break
+            self._set_broken(k, True)            # paint-break
             self._update_status()
 
     def on_left_release(self, sender, app_data):
         was_drag, was_pan = self._moved, self._gesture_pan
         self._ldown = False
+        self._gesture_pan = False
         if was_drag or was_pan:
-            return                                       # drag/pan already handled
-        mp = dpg.get_mouse_pos(local=False)
-        conv = self._mouse_to_image(*mp)
-        if conv is None:
+            return                               # drag/pan already handled
+        dm = self._draw_mouse()
+        if dm is None:
             return
-        ix, iy, lx, ly = conv
-        if not (0 <= lx <= self.dw and 0 <= ly <= self.dh):
-            return
-        radius = 9.0 / (self.zoom * self.scale)
-        k = self._nearest_connector(ix, iy, radius)
+        k = self._nearest_connector(*self._img_from_draw(*dm), self._hit_radius())
         if k is not None:
             self._set_broken(k, k not in self.broken)   # click = toggle
             self._update_status()
@@ -309,15 +298,12 @@ class BreakApp:
             with dpg.drawlist(width=self.dw, height=self.dh, tag="dl"):
                 pass
 
-        space_key = getattr(dpg, "mvKey_Spacebar", getattr(dpg, "mvKey_Space", 32))
         with dpg.handler_registry():
             dpg.add_mouse_wheel_handler(callback=self.on_wheel)
-            # pan: middle-mouse drag, or Space held + left drag
+            # pan: middle-mouse drag, or Space held + left drag (Space read live)
             dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Middle, callback=self.on_mid_down)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Middle, callback=self.on_mid_drag)
             dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Middle, callback=self.on_mid_release)
-            dpg.add_key_down_handler(space_key, callback=self.on_space_down)
-            dpg.add_key_release_handler(space_key, callback=self.on_space_up)
             # break: left click = toggle, left drag = paint
             dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Left, callback=self.on_left_down)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Left, threshold=0.0,
