@@ -101,6 +101,17 @@ PRESETS: Dict[str, HatchConfig] = {
         tonal_adaptive_thresholds=True,
         tonal_dither_floor=0.14,
     ),
+
+    # METHODOLOGY 2 (experimental): darkness from variable line SPACING, not
+    # overlapping layers. One family of parallel lines that bunch in shadows and
+    # spread in highlights. ls_step = tightest spacing in the darkest areas.
+    "line_spacing": replace(
+        BASELINE,
+        line_spacing=True,
+        ls_step=5.0,
+        ls_gamma=1.0,
+        ls_angle=0.0,
+    ),
 }
 
 

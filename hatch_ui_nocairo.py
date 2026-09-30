@@ -235,6 +235,19 @@ class HatchConfig:
     # identical for a plotter, ~35-45% smaller files. Set 2 to keep more digits.
     svg_decimals: int      = 1
 
+    # ── Methodology 2: variable-spacing parallel lines (engraving style) ───────
+    # Darkness comes from LINE SPACING, not overlapping layers: one family of
+    # parallel lines whose perpendicular spacing shrinks in dark areas and widens
+    # (or vanishes) in light ones. Implemented as iso-level contours of the
+    # cumulative darkness integrated across the line direction — so lines stay
+    # continuous across the image and bunch/spread smoothly with tone.
+    line_spacing: bool      = False
+    ls_step: float          = 5.0    # tightest spacing (px) in the DARKEST areas
+    ls_gamma: float         = 1.0    # tone curve on darkness (>1 = more contrast)
+    ls_angle: float         = 0.0    # line angle in degrees (0 = horizontal lines)
+    ls_min_len: float       = 6.0    # drop contour fragments shorter than this
+    ls_single_path: bool    = True   # collapse to one continuous stroke + sidecar
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility
@@ -1199,12 +1212,111 @@ if __name__ == "__main__":
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Methodology 2: variable-spacing parallel lines (engraving style)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_linespacing(png_path: str, arr: np.ndarray, cfg: HatchConfig,
+                    out_svg_path: str, t0: float, status_cb=None, log=None) -> Dict:
+    """
+    Darkness via LINE SPACING instead of overlapping layers. Integrate darkness
+    across the line direction into a cumulative field D; the iso-level contours of
+    D (every `ls_step`) are the lines. Where it's dark, D climbs fast so contours
+    bunch (tight spacing = min ~ls_step px); where light, D is flat so they spread
+    or vanish. Contours are continuous across the image -> smooth engraving lines.
+    """
+    import math
+    h, w = arr.shape
+    angle = float(cfg.ls_angle) % 180.0
+    dark = np.clip(1.0 - arr, 0.0, 1.0) ** float(cfg.ls_gamma)
+
+    if abs(angle) < 1e-6:
+        field = dark
+    else:
+        if status_cb: status_cb("Line-spacing: rotating field…")
+        from scipy.ndimage import rotate as _rot
+        field = _rot(dark, angle, reshape=True, order=1, mode="constant", cval=0.0)
+    Hf, Wf = field.shape
+
+    # output(row,col) -> input(row,col): input = R·output + offset  (scipy convention)
+    a = math.radians(angle)
+    ca, sa = math.cos(a), math.sin(a)
+    in_c  = ((h - 1) / 2.0, (w - 1) / 2.0)
+    out_c = ((Hf - 1) / 2.0, (Wf - 1) / 2.0)
+    R = ((ca, sa), (-sa, ca))
+    off0 = in_c[0] - (R[0][0] * out_c[0] + R[0][1] * out_c[1])
+    off1 = in_c[1] - (R[1][0] * out_c[0] + R[1][1] * out_c[1])
+
+    def to_image(rr, cc):                      # field (row,col) -> image (x,y)
+        return (R[1][0] * rr + R[1][1] * cc + off1,   # x = col_in
+                R[0][0] * rr + R[0][1] * cc + off0)    # y = row_in
+
+    if status_cb: status_cb("Line-spacing: building contours…")
+    D = np.cumsum(field, axis=0)               # integrate across the line direction
+    step = max(0.5, float(cfg.ls_step))
+    levels = np.arange(step, float(D.max()) + step, step)
+    simp = float(cfg.simplify_tolerance_px)
+    min_len = float(cfg.ls_min_len)
+
+    strokes: List[List[Tuple[float, float]]] = []
+    if _SKIMAGE_OK:
+        for lvl in levels:
+            for c in measure.find_contours(D, float(lvl)):
+                if len(c) < 2:
+                    continue
+                pl = [to_image(float(rr), float(cc)) for rr, cc in c]
+                ls = LineString(pl)
+                if simp > 0:
+                    ls = ls.simplify(simp, preserve_topology=False)
+                if ls.length >= min_len and len(ls.coords) >= 2:
+                    strokes.append(list(ls.coords))
+    if log: log(f"Line-spacing: {len(levels)} levels -> {len(strokes)} line strokes "
+                f"(step={step}, angle={angle:.0f})")
+
+    # Stitch: one continuous path (+ break-tool sidecar) or packed multi-path.
+    if cfg.ls_single_path:
+        ordered = order_strokes_region_first(strokes, w, h, float(cfg.tonal_region_px))
+        d = strokes_to_single_d(ordered)
+        all_d = [d] if d else []
+        try:
+            import json as _json
+            with open(os.path.splitext(out_svg_path)[0] + "_strokes.json", "w") as _f:
+                _json.dump({"width": w, "height": h,
+                            "strokes": [[[round(px, 1), round(py, 1)]
+                                         for px, py in s] for s in ordered]}, _f)
+        except Exception as _e:
+            if log: log(f"strokes sidecar error: {_e}")
+    else:
+        all_d = [strokes_to_single_d([s]) for s in strokes]
+    if not all_d:
+        all_d = ["M 0,0 L 0,0"]
+
+    if status_cb: status_cb("Writing SVG…")
+    write_svg(out_svg_path, all_d, w, h, cfg, status_cb=status_cb)
+    preview_img = None
+    try:
+        preview_img = render_preview(all_d, w, h)
+        preview_img.save(os.path.splitext(out_svg_path)[0] + "_preview.png")
+    except Exception as _e:
+        if log: log(f"Preview error: {_e}")
+
+    return {
+        "paths":         len(all_d),
+        "pen_lifts_est": sum(d.count("M ") for d in all_d),
+        "elapsed_sec":   time.time() - t0,
+        "work_w":        w, "work_h": h,
+        "aux_used":      0, "line_strokes": len(strokes),
+        "preview_image": preview_img,
+        "band_results":  [], "band_caps": [],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
 def hatch_pipeline(png_path: str, out_svg_path: str, cfg: HatchConfig,
                    progress_cb=None, status_cb=None, log_cb=None) -> Dict:
-    """Load + preprocess the image, then render it with the tonal engine."""
+    """Load + preprocess the image, then render it with the selected engine."""
     t0 = time.time()
     def log(s):
         if log_cb:
@@ -1212,6 +1324,9 @@ def hatch_pipeline(png_path: str, out_svg_path: str, cfg: HatchConfig,
     if status_cb:
         status_cb("Loading + preprocessing image…")
     arr = load_and_preprocess_image(png_path, cfg)
+    if cfg.line_spacing:
+        return run_linespacing(png_path, arr, cfg, out_svg_path, t0,
+                               status_cb=status_cb, log=log)
     return run_tonal(png_path, arr, cfg, out_svg_path, t0,
                      status_cb=status_cb, log=log)
 
