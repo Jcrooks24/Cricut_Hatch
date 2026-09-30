@@ -245,8 +245,16 @@ class HatchConfig:
     ls_step: float          = 5.0    # tightest spacing (px) in the DARKEST areas
     ls_gamma: float         = 1.0    # tone curve on darkness (>1 = more contrast)
     ls_angle: float         = 0.0    # line angle in degrees (0 = horizontal lines)
-    ls_min_len: float       = 6.0    # drop contour fragments shorter than this
+    ls_min_len: float       = 6.0    # drop fragments shorter than this
     ls_single_path: bool    = True   # collapse to one continuous stroke + sidecar
+    # flowing mode drip control: clamp darkness before integrating so large black
+    # areas don't pile into vertical streaks (1.0 = no clamp).
+    ls_dark_cap: float      = 1.0
+    # straight mode: truly parallel straight lines; darkness -> line density via
+    # tonal bands drawn from one global grid (aligned spacing, no drift/drips).
+    ls_straight: bool       = False
+    ls_bands: int           = 6      # darkness bands
+    ls_max_stride: int      = 9      # lightest band keeps every Nth global line
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1228,52 +1236,91 @@ def run_linespacing(png_path: str, arr: np.ndarray, cfg: HatchConfig,
     h, w = arr.shape
     angle = float(cfg.ls_angle) % 180.0
     dark = np.clip(1.0 - arr, 0.0, 1.0) ** float(cfg.ls_gamma)
-
-    if abs(angle) < 1e-6:
-        field = dark
-    else:
-        if status_cb: status_cb("Line-spacing: rotating field…")
-        from scipy.ndimage import rotate as _rot
-        field = _rot(dark, angle, reshape=True, order=1, mode="constant", cval=0.0)
-    Hf, Wf = field.shape
-
-    # output(row,col) -> input(row,col): input = R·output + offset  (scipy convention)
-    a = math.radians(angle)
-    ca, sa = math.cos(a), math.sin(a)
-    in_c  = ((h - 1) / 2.0, (w - 1) / 2.0)
-    out_c = ((Hf - 1) / 2.0, (Wf - 1) / 2.0)
-    R = ((ca, sa), (-sa, ca))
-    off0 = in_c[0] - (R[0][0] * out_c[0] + R[0][1] * out_c[1])
-    off1 = in_c[1] - (R[1][0] * out_c[0] + R[1][1] * out_c[1])
-
-    def to_image(rr, cc):                      # field (row,col) -> image (x,y)
-        return (R[1][0] * rr + R[1][1] * cc + off1,   # x = col_in
-                R[0][0] * rr + R[0][1] * cc + off0)    # y = row_in
-
-    if status_cb: status_cb("Line-spacing: building contours…")
-    D = np.cumsum(field, axis=0)               # integrate across the line direction
     step = max(0.5, float(cfg.ls_step))
-    levels = np.arange(step, float(D.max()) + step, step)
     simp = float(cfg.simplify_tolerance_px)
     min_len = float(cfg.ls_min_len)
-
     strokes: List[List[Tuple[float, float]]] = []
-    if _SKIMAGE_OK:
-        for lvl in levels:
-            for c in measure.find_contours(D, float(lvl)):
-                if len(c) < 2:
-                    continue
-                pl = [to_image(float(rr), float(cc)) for rr, cc in c]
-                ls = LineString(pl)
-                if simp > 0:
-                    ls = ls.simplify(simp, preserve_topology=False)
-                if ls.length >= min_len and len(ls.coords) >= 2:
-                    strokes.append(list(ls.coords))
-    if log: log(f"Line-spacing: {len(levels)} levels -> {len(strokes)} line strokes "
-                f"(step={step}, angle={angle:.0f})")
 
-    # Stitch: one continuous path (+ break-tool sidecar) or packed multi-path.
-    if cfg.ls_single_path:
+    if cfg.ls_straight:
+        # STRAIGHT parallel lines: one global grid at `step`; each darkness band
+        # keeps every Nth line (dense in shadows, sparse in highlights). Lines are
+        # drawn from the SAME grid so spacing is always aligned (no drift/drips).
+        if status_cb: status_cb("Line-spacing: straight bands…")
+        bounds = (0.0, 0.0, float(w), float(h))
+        grid = make_parallel_lines(bounds, step, angle, phase=0.0)
+        bands = max(1, int(cfg.ls_bands))
+        edges = np.linspace(0.12, 0.95, bands + 1)
+        for bi in range(bands):
+            d_lo = float(edges[bi])
+            d_hi = float(edges[bi + 1]) if bi < bands - 1 else 1.01
+            mask = (dark >= d_lo) & (dark < d_hi)
+            mask[0, :] = mask[-1, :] = False
+            mask[:, 0] = mask[:, -1] = False
+            if mask.sum() == 0:
+                continue
+            polys = mask_to_polygons(mask, cfg, min_area=float(cfg.tonal_min_area_px2),
+                                     simplify_tol=simp)
+            if not polys:
+                continue
+            d_mid = 0.5 * (d_lo + d_hi)
+            stride = max(1, int(round(cfg.ls_max_stride * (1.0 - d_mid))))
+            for ln in grid[::stride]:
+                for poly in polys:
+                    for seg in clip_lines_to_polygon([ln], poly):
+                        cs = list(seg.coords)
+                        if len(cs) >= 2:
+                            strokes.append(cs)
+        if log: log(f"Line-spacing STRAIGHT: {bands} bands, {len(grid)} grid lines "
+                    f"-> {len(strokes)} segments (step={step}, angle={angle:.0f})")
+    else:
+        # FLOWING contours of the cumulative darkness field.
+        if float(cfg.ls_dark_cap) < 1.0:
+            dark = np.minimum(dark, float(cfg.ls_dark_cap))   # limit drip in black areas
+        if abs(angle) < 1e-6:
+            field = dark
+        else:
+            if status_cb: status_cb("Line-spacing: rotating field…")
+            from scipy.ndimage import rotate as _rot
+            field = _rot(dark, angle, reshape=True, order=1, mode="constant", cval=0.0)
+        Hf, Wf = field.shape
+        a = math.radians(angle)
+        ca, sa = math.cos(a), math.sin(a)
+        in_c  = ((h - 1) / 2.0, (w - 1) / 2.0)
+        out_c = ((Hf - 1) / 2.0, (Wf - 1) / 2.0)
+        R = ((ca, sa), (-sa, ca))
+        off0 = in_c[0] - (R[0][0] * out_c[0] + R[0][1] * out_c[1])
+        off1 = in_c[1] - (R[1][0] * out_c[0] + R[1][1] * out_c[1])
+
+        def to_image(rr, cc):                  # field (row,col) -> image (x,y)
+            return (R[1][0] * rr + R[1][1] * cc + off1,
+                    R[0][0] * rr + R[0][1] * cc + off0)
+
+        if status_cb: status_cb("Line-spacing: building contours…")
+        D = np.cumsum(field, axis=0)
+        levels = np.arange(step, float(D.max()) + step, step)
+        if _SKIMAGE_OK:
+            for lvl in levels:
+                for c in measure.find_contours(D, float(lvl)):
+                    if len(c) < 2:
+                        continue
+                    pl = [to_image(float(rr), float(cc)) for rr, cc in c]
+                    ls = LineString(pl)
+                    if simp > 0:
+                        ls = ls.simplify(simp, preserve_topology=False)
+                    if ls.length >= min_len and len(ls.coords) >= 2:
+                        strokes.append(list(ls.coords))
+        if log: log(f"Line-spacing FLOWING: {len(levels)} levels -> {len(strokes)} "
+                    f"strokes (step={step}, angle={angle:.0f}, cap={cfg.ls_dark_cap})")
+
+    if cfg.ls_straight:
+        # Straight segments: boustrophedon with pen-UPS across gaps — adjacent
+        # parallel lines connect pen-down, everything else lifts. No long
+        # cross-connectors (those only make sense for continuous flowing strokes).
+        segs = [LineString(s) for s in strokes if len(s) >= 2]
+        d = stitch_segs_greedy(segs, step * 1.5, mask=None, short_join=step * 1.5)
+        all_d = [d] if d else []
+    elif cfg.ls_single_path:
+        # Flowing: one continuous path (+ break-tool sidecar).
         ordered = order_strokes_region_first(strokes, w, h, float(cfg.tonal_region_px))
         d = strokes_to_single_d(ordered)
         all_d = [d] if d else []

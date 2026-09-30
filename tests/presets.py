@@ -102,15 +102,18 @@ PRESETS: Dict[str, HatchConfig] = {
         tonal_dither_floor=0.14,
     ),
 
-    # METHODOLOGY 2 (experimental): darkness from variable line SPACING, not
-    # overlapping layers. One family of parallel lines that bunch in shadows and
-    # spread in highlights. ls_step = tightest spacing in the darkest areas.
-    "line_spacing": replace(
+    # METHODOLOGY 2 (experimental): darkness from variable line SPACING.
+    # (a) flowing contours — organic, form-following; ls_dark_cap tames drips.
+    "line_flowing": replace(
         BASELINE,
-        line_spacing=True,
-        ls_step=5.0,
-        ls_gamma=1.0,
-        ls_angle=0.0,
+        line_spacing=True, ls_straight=False,
+        ls_step=5.0, ls_gamma=1.3, ls_dark_cap=0.75, ls_angle=0.0,
+    ),
+    # (b) straight parallel lines — clean line-screen; density by tonal band.
+    "line_straight": replace(
+        BASELINE,
+        line_spacing=True, ls_straight=True,
+        ls_step=4.0, ls_gamma=1.0, ls_bands=6, ls_max_stride=9, ls_angle=0.0,
     ),
 }
 
