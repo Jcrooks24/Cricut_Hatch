@@ -102,10 +102,11 @@ class BreakApp:
         return [c for c in self.conns if c[3] >= self.min_len]
 
     # ── coordinate transforms ─────────────────────────────────────────────────
-    def _apply_transform(self):
-        m = (dpg.create_translation_matrix([self.pan[0], self.pan[1], 0.0]) *
-             dpg.create_scale_matrix([self.zoom, self.zoom, 1.0]))
-        dpg.apply_transform("scene", m)
+    # zoom/pan are baked into draw coordinates (no draw_node transform, which some
+    # DPG versions won't accept as a draw_image parent). Full redraw on zoom/pan.
+    def _to_screen(self, ix, iy):
+        return (ix * self.scale * self.zoom + self.pan[0],
+                iy * self.scale * self.zoom + self.pan[1])
 
     def _mouse_to_image(self, mx, my):
         """Screen mouse pos -> image-space (px), inverting drawlist/pan/zoom/scale."""
@@ -114,22 +115,22 @@ class BreakApp:
         except Exception:
             return None
         lx, ly = mx - ox, my - oy                       # drawlist-local screen px
-        dx = (lx - self.pan[0]) / self.zoom             # display px (pre-transform)
+        dx = (lx - self.pan[0]) / self.zoom             # display px
         dy = (ly - self.pan[1]) / self.zoom
         return dx / self.scale, dy / self.scale, lx, ly
 
     # ── scene build / redraw ──────────────────────────────────────────────────
-    def _rebuild_scene(self):
-        dpg.delete_item("scene", children_only=True)
-        dpg.draw_image("bg", (0, 0), (self.dw, self.dh), parent="scene")
+    def _draw_scene(self):
+        dpg.delete_item("dl", children_only=True)
+        z, (px, py) = self.zoom, self.pan
+        dpg.draw_image("bg", (px, py),
+                       (px + self.dw * z, py + self.dh * z), parent="dl")
         self.line_tags.clear()
         for (k, p0, p1, ln) in self._candidates():
             col = (40, 200, 40, 255) if k in self.broken else (230, 30, 30, 220)
-            tag = dpg.draw_line((p0[0] * self.scale, p0[1] * self.scale),
-                                (p1[0] * self.scale, p1[1] * self.scale),
-                                color=col, thickness=1.5, parent="scene")
+            tag = dpg.draw_line(self._to_screen(*p0), self._to_screen(*p1),
+                                color=col, thickness=1.5, parent="dl")
             self.line_tags[k] = tag
-        self._apply_transform()
         self._update_status()
 
     def _update_status(self):
@@ -173,7 +174,7 @@ class BreakApp:
         self.pan[0] = lx - new * disp_x                 # keep point under cursor fixed
         self.pan[1] = ly - new * disp_y
         self.zoom = new
-        self._apply_transform()
+        self._draw_scene()
         self._update_status()
 
     def on_right_down(self, sender, app_data):
@@ -186,7 +187,7 @@ class BreakApp:
         _, ddx, ddy = app_data
         self.pan[0] = self._pan0[0] + ddx
         self.pan[1] = self._pan0[1] + ddy
-        self._apply_transform()
+        self._draw_scene()
 
     def on_right_release(self, sender, app_data):
         self._rdown = False
@@ -235,20 +236,20 @@ class BreakApp:
     def on_filter(self, sender, value):
         self.min_len = float(value)
         self.broken = {k for k in self.broken if self.conns[k][3] >= self.min_len}
-        self._rebuild_scene()
+        self._draw_scene()
 
     def on_break_all_shown(self):
         for (k, p0, p1, ln) in self._candidates():
             self.broken.add(k)
-        self._rebuild_scene()
+        self._draw_scene()
 
     def on_clear(self):
         self.broken.clear()
-        self._rebuild_scene()
+        self._draw_scene()
 
     def on_reset_view(self):
         self.zoom, self.pan = 1.0, [0.0, 0.0]
-        self._apply_transform()
+        self._draw_scene()
         self._update_status()
 
     def on_export(self):
@@ -290,7 +291,7 @@ class BreakApp:
             dpg.add_text("", tag="status")
             self._make_bg_texture()
             with dpg.drawlist(width=self.dw, height=self.dh, tag="dl"):
-                dpg.draw_node(tag="scene")
+                pass
 
         with dpg.handler_registry():
             dpg.add_mouse_wheel_handler(callback=self.on_wheel)
@@ -305,7 +306,7 @@ class BreakApp:
     def run(self):
         dpg.create_context()
         self.build()
-        self._rebuild_scene()
+        self._draw_scene()
         dpg.create_viewport(title="Stitch-break tool",
                             width=min(1200, self.dw + 60),
                             height=self.dh + 220)
