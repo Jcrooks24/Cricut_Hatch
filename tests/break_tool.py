@@ -10,11 +10,11 @@ there (one extra pen lift), so only the subtle in-region connectors remain.
 
 If no path is given, the most recent *_strokes.json under results/runs is used.
 
-Controls:
-    scroll wheel   zoom to cursor
-    right-drag     pan
+Controls (left mouse is always the break tool):
     left-click     toggle a break on the nearest connector
     left-drag      "paint" breaks across every connector you swipe over
+    scroll wheel   zoom to cursor
+    Space+drag     pan   (or middle-mouse drag)
 Red = connector kept (pen-down). Green = broken (pen-up). Short connectors below
 the length slider are always kept. Export writes <name>_broken.svg.
 """
@@ -96,7 +96,9 @@ class BreakApp:
         self._pan0 = [0.0, 0.0]
         self._moved = False
         self._ldown = False          # left gesture in progress
-        self._rdown = False          # right (pan) gesture in progress
+        self._mdown = False          # middle (pan) gesture in progress
+        self._space = False          # Space held -> pan modifier
+        self._gesture_pan = False    # current left gesture is a pan (Space at press)
 
     def _candidates(self):
         return [c for c in self.conns if c[3] >= self.min_len]
@@ -177,30 +179,44 @@ class BreakApp:
         self._draw_scene()
         self._update_status()
 
-    def on_right_down(self, sender, app_data):
-        # down fires every frame while held; capture pan origin only on frame 1
-        if not self._rdown:
-            self._rdown = True
+    # Space bar held -> a pan modifier (left-drag pans instead of breaking).
+    def on_space_down(self, sender, app_data):
+        self._space = True
+
+    def on_space_up(self, sender, app_data):
+        self._space = False
+
+    # Middle-mouse drag = pan (always). Left-drag with Space held = pan too.
+    def on_mid_down(self, sender, app_data):
+        if not self._mdown:
+            self._mdown = True
             self._pan0 = list(self.pan)
 
-    def on_right_drag(self, sender, app_data):
+    def on_mid_drag(self, sender, app_data):
         _, ddx, ddy = app_data
         self.pan[0] = self._pan0[0] + ddx
         self.pan[1] = self._pan0[1] + ddy
         self._draw_scene()
 
-    def on_right_release(self, sender, app_data):
-        self._rdown = False
+    def on_mid_release(self, sender, app_data):
+        self._mdown = False
 
     def on_left_down(self, sender, app_data):
         if not self._ldown:            # first frame of the gesture only
             self._ldown = True
             self._moved = False
+            self._gesture_pan = self._space      # lock gesture type at press
+            self._pan0 = list(self.pan)
 
     def on_left_drag(self, sender, app_data):
         _, ddx, ddy = app_data
         if abs(ddx) + abs(ddy) > 3:
             self._moved = True
+        if self._gesture_pan:                    # Space held at press -> pan
+            self.pan[0] = self._pan0[0] + ddx
+            self.pan[1] = self._pan0[1] + ddy
+            self._draw_scene()
+            return
         mp = dpg.get_mouse_pos(local=False)
         conv = self._mouse_to_image(*mp)
         if conv is None:
@@ -211,14 +227,14 @@ class BreakApp:
         radius = 9.0 / (self.zoom * self.scale)         # ~9 screen px, in image px
         k = self._nearest_connector(ix, iy, radius)
         if k is not None and k not in self.broken:
-            self._set_broken(k, True)                   # paint-break (drag only breaks)
+            self._set_broken(k, True)                   # paint-break
             self._update_status()
 
     def on_left_release(self, sender, app_data):
-        was_drag = self._moved
+        was_drag, was_pan = self._moved, self._gesture_pan
         self._ldown = False
-        if was_drag:
-            return                                       # drag already painted breaks
+        if was_drag or was_pan:
+            return                                       # drag/pan already handled
         mp = dpg.get_mouse_pos(local=False)
         conv = self._mouse_to_image(*mp)
         if conv is None:
@@ -276,8 +292,8 @@ class BreakApp:
             dpg.add_text(f"Stitch-break tool — {os.path.basename(self.path)}  "
                          f"({len(self.strokes)} strokes, {len(self.conns)} connectors)",
                          color=(120, 200, 255))
-            dpg.add_text("scroll = zoom  |  right-drag = pan  |  left-click = toggle "
-                         "a break  |  left-drag = paint breaks across connectors",
+            dpg.add_text("left-click = toggle a break  |  left-drag = paint breaks  |  "
+                         "scroll = zoom  |  Space+drag or middle-drag = pan",
                          wrap=980, color=(170, 170, 170))
             with dpg.group(horizontal=True):
                 dpg.add_slider_float(label="min connector length (px)", tag="flt",
@@ -293,11 +309,16 @@ class BreakApp:
             with dpg.drawlist(width=self.dw, height=self.dh, tag="dl"):
                 pass
 
+        space_key = getattr(dpg, "mvKey_Spacebar", getattr(dpg, "mvKey_Space", 32))
         with dpg.handler_registry():
             dpg.add_mouse_wheel_handler(callback=self.on_wheel)
-            dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Right, callback=self.on_right_down)
-            dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Right, callback=self.on_right_drag)
-            dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Right, callback=self.on_right_release)
+            # pan: middle-mouse drag, or Space held + left drag
+            dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Middle, callback=self.on_mid_down)
+            dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Middle, callback=self.on_mid_drag)
+            dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Middle, callback=self.on_mid_release)
+            dpg.add_key_down_handler(space_key, callback=self.on_space_down)
+            dpg.add_key_release_handler(space_key, callback=self.on_space_up)
+            # break: left click = toggle, left drag = paint
             dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Left, callback=self.on_left_down)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Left, threshold=0.0,
                                        callback=self.on_left_drag)
