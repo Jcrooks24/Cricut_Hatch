@@ -28,3 +28,6 @@ Thumbs.db
 # repo is public. The harness references them by key; drop your own copies in.
 tests/images/*
 !tests/images/README.md
+
+# Generated grade exports (from the cockpit Export button)
+results/feedback_*
