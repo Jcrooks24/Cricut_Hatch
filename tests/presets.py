@@ -102,19 +102,19 @@ PRESETS: Dict[str, HatchConfig] = {
         tonal_dither_floor=0.14,
     ),
 
-    # METHODOLOGY 2 (experimental): darkness from variable line SPACING.
-    # (a) flowing contours — organic, form-following; ls_dark_cap tames drips.
-    "line_flowing": replace(
-        BASELINE,
-        line_spacing=True, ls_straight=False,
-        ls_step=5.0, ls_gamma=1.3, ls_dark_cap=0.75, ls_angle=0.0,
-    ),
-    # (b) straight parallel lines — clean line-screen; density by tonal band.
-    "line_straight": replace(
+    # METHODOLOGY 2: variable-spacing STRAIGHT parallel lines (line-screen /
+    # engraving). Darkness -> local line density: one global grid of parallel
+    # lines, each tonal band keeps every Nth line (dense in shadows, sparse in
+    # highlights). Adaptive (quantile) band edges auto-fit each image's contrast.
+    # Clean and consistent across subjects. ls_angle rotates the lines; ls_step is
+    # the tightest spacing; ls_bands / ls_max_stride set the density range.
+    "line_screen": replace(
         BASELINE,
         line_spacing=True, ls_straight=True,
-        ls_step=4.0, ls_gamma=1.0, ls_bands=6, ls_max_stride=9, ls_angle=0.0,
+        ls_step=4.0, ls_bands=6, ls_max_stride=9, ls_angle=0.0,
     ),
+    # (Shelved: the "flowing" cumulative-contour style — organic but drips on
+    #  dark-heavy images. Still available via line_spacing=True, ls_straight=False.)
 }
 
 

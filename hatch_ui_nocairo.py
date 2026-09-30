@@ -255,6 +255,8 @@ class HatchConfig:
     ls_straight: bool       = False
     ls_bands: int           = 6      # darkness bands
     ls_max_stride: int      = 9      # lightest band keeps every Nth global line
+    ls_adaptive: bool       = True   # band edges from the image's tonal quantiles
+                                     # (auto-contrast; fixes faint low-contrast images)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1249,7 +1251,19 @@ def run_linespacing(png_path: str, arr: np.ndarray, cfg: HatchConfig,
         bounds = (0.0, 0.0, float(w), float(h))
         grid = make_parallel_lines(bounds, step, angle, phase=0.0)
         bands = max(1, int(cfg.ls_bands))
-        edges = np.linspace(0.12, 0.95, bands + 1)
+        if cfg.ls_adaptive:
+            # band edges from the image's own darkness quantiles -> each band holds
+            # ~equal area, so the density range spans the actual tonal range.
+            sample = dark[dark >= 0.06]
+            if sample.size:
+                edges = np.quantile(sample, np.linspace(0.0, 1.0, bands + 1))
+                edges[0] = min(edges[0], 0.06)
+                for i in range(1, len(edges)):     # strict monotonic separation
+                    edges[i] = max(edges[i], edges[i - 1] + 1e-3)
+            else:
+                edges = np.linspace(0.12, 0.95, bands + 1)
+        else:
+            edges = np.linspace(0.12, 0.95, bands + 1)
         for bi in range(bands):
             d_lo = float(edges[bi])
             d_hi = float(edges[bi + 1]) if bi < bands - 1 else 1.01
@@ -1262,8 +1276,10 @@ def run_linespacing(png_path: str, arr: np.ndarray, cfg: HatchConfig,
                                      simplify_tol=simp)
             if not polys:
                 continue
-            d_mid = 0.5 * (d_lo + d_hi)
-            stride = max(1, int(round(cfg.ls_max_stride * (1.0 - d_mid))))
+            # stride by band RANK: lightest band -> max_stride (sparse), darkest
+            # band -> 1 (dense). Full density range regardless of image contrast.
+            stride = max(1, int(round(cfg.ls_max_stride *
+                                      (bands - 1 - bi) / max(1, bands - 1))))
             for ln in grid[::stride]:
                 for poly in polys:
                     for seg in clip_lines_to_polygon([ln], poly):
