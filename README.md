@@ -4,30 +4,29 @@ Converts a photo into a **pen-and-ink hatched SVG** tuned for a Cricut pen
 plotter, keeping the path/pen-lift count low because large files crash Cricut
 Design Space.
 
-**Recommended mode: `tonal`** — clean cross-hatch engraving-style rendering.
-Polygonize tonal regions → darkness sets how many overlapping angled layers a
-region gets → each layer is stitched into ONE path with a greedy
-nearest-neighbour tour (few pen lifts) → each layer uses a different angle so
-passes don't overlap. Produces the most recognizable output in just a handful of
-paths. See `run_tonal` in `hatch_ui_nocairo.py` and the `tonal` preset.
+**The method — `run_tonal` (tonal cross-hatch):** polygonize tonal regions →
+darkness sets how many overlapping angled layers a region gets → each layer is
+stitched into ONE path with a greedy nearest-neighbour tour (few pen lifts) →
+each layer uses a different angle so passes don't overlap. Options:
 
-Other modes: `line_art` (HED edge contours + shading) and the original tone-band
-`baseline` (kept for reference / A-B).
+- **adaptive thresholds** — layer thresholds from the image's tonal quantiles
+  (fixes near-solid low-key subjects)
+- **adaptive min-area** — crisp detailed foreground, de-speckled flat grounds
+- **dither + dither-floor** — anti-banding stipple that leaves true blacks solid
+- **dark-region trace** — outline the darkest shapes for crisp definition
+- **darkness-level count** — set the exact number of tones (flat/graphic images)
+- **single-path mode** — collapse everything into ONE continuous stroke (1 pen
+  lift), then cut the visible connectors in the stitch-break tool
+- **SVG compression** — coordinate rounding + implicit lineto for small files
 
-The interactive app is `hatch_ui_nocairo.py` (DearPyGui). The same pipeline is
-callable headlessly via `hatch_pipeline(png, out_svg, cfg)`, which is what the
-test harness uses.
+`hatch_ui_nocairo.py` is a library; call `hatch_pipeline(png, out_svg, cfg)`.
+The front-ends are the **batch cockpit** (`tests/batch_ui.py`) and the
+**stitch-break tool** (`tests/break_tool.py`).
 
 ## Install
 
 ```bash
 py -3.11 -m pip install -r requirements.txt
-```
-
-## Run the app
-
-```bash
-py -3.11 hatch_ui_nocairo.py
 ```
 
 ## The test / grading workflow
