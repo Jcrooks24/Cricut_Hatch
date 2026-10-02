@@ -27,22 +27,29 @@ each layer uses a different angle so passes don't overlap. Options:
 py -3.11 hatch_app.py
 ```
 
-A standalone desktop app wired to the printed **baseline**: load one photo →
-Convert → see a live preview, path/pen-lift count, drawn length and an estimated
-Cricut plot time → **Export SVG**. A few dials cover what matters for a print:
+A standalone desktop app for the **single-path** methodology (the whole drawing
+as one continuous stroke = 1 pen lift). Workflow:
+
+1. **Load image** (native Windows file picker).
+2. **Convert** — see a live preview, path/pen-lift count, drawn length and an
+   estimated Cricut plot time.
+3. **Break tool…** — single-path leaves visible travel connectors where the pen
+   crosses white to reach a far region; this opens the stitch-break tool to cut
+   them (each cut = one extra, worthwhile pen lift). Essential second step.
+4. **Export SVG** — saves the connector-cleaned SVG if you ran the break tool,
+   otherwise the raw single-path SVG. Native save dialog.
+
+Dials that matter for a print:
 
 - **Output size** — longest side in inches.
 - **Speed (optional)** — off by default, so Convert reproduces the full-quality
-  look you printed. Tick it to trade dark-area ink for a faster plot (e.g. a
-  ~3.8 h portrait drops to ~2.1 h); the slider sets how aggressive.
+  look you printed. Tick it to trade dark-area ink for a faster plot; the slider
+  sets how aggressive.
 - **Darkness levels** — 0 = auto; set the real tone count for flat / graphic art.
-
-Load / Export use the native Windows file explorer.
 
 (`py -3.11 hatch_app.py --selftest` runs the convert/estimate path headless.)
 
-The **batch cockpit** (`tests/batch_ui.py`) and **stitch-break tool**
-(`tests/break_tool.py`) are the test/grading front-ends, below.
+The **batch cockpit** (`tests/batch_ui.py`) is the test/grading front-end, below.
 
 ## Install
 

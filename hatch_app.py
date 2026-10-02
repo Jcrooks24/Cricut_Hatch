@@ -30,7 +30,10 @@ sys.path.insert(0, os.path.join(_REPO, "tests"))
 from presets import get as get_preset                      # noqa: E402
 from hatch_ui_nocairo import hatch_pipeline                # noqa: E402
 
-BASELINE = get_preset("baseline")
+# The anchored v1 methodology is SINGLE-PATH: the whole drawing as one continuous
+# stroke (1 pen lift), then the travel connectors cut in the break tool. That is
+# what the app produces; the break tool is an integral second step.
+BASELINE = get_preset("single_path")
 APP_OUT = os.path.join(_REPO, "results", "app")
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 
@@ -100,6 +103,9 @@ def convert(img_path: str, out_svg: str, size_in: float, growth: float, levels: 
     stats["est_hours"] = hours
     stats["preview_png"] = os.path.splitext(out_svg)[0] + "_preview.png"
     stats["svg_path"] = out_svg
+    # single-path mode drops a <name>_strokes.json for the break tool
+    side = os.path.splitext(out_svg)[0] + "_strokes.json"
+    stats["sidecar"] = side if os.path.exists(side) else None
     return stats
 
 
@@ -213,8 +219,32 @@ class HatchApp:
         self.export_ready = False
         dpg.configure_item("btn_convert", enabled=False)
         dpg.configure_item("btn_export", enabled=False)
+        dpg.configure_item("btn_break", enabled=False)
         dpg.set_value("status", "Converting…  (dense images can take a minute)")
         threading.Thread(target=self._do_convert, daemon=True).start()
+
+    def _broken_svg(self):
+        """The cleaned SVG the break tool writes, if it exists."""
+        svg = (self.result or {}).get("svg_path")
+        if not svg:
+            return None
+        cand = os.path.splitext(svg)[0] + "_broken.svg"
+        return cand if os.path.exists(cand) else None
+
+    def _on_break_tool(self):
+        import dearpygui.dearpygui as dpg
+        side = (self.result or {}).get("sidecar")
+        if not side or not os.path.exists(side):
+            dpg.set_value("status", "No single-path data to break. Convert first.")
+            return
+        tool = os.path.join(_REPO, "tests", "break_tool.py")
+        try:
+            import subprocess
+            subprocess.Popen([sys.executable, tool, side])
+            dpg.set_value("status", "Break tool opened. Cut the connectors, "
+                                    "Export broken SVG there, then Export here.")
+        except Exception as e:
+            dpg.set_value("status", f"Break tool failed to launch: {e}")
 
     def _on_export(self):
         import dearpygui.dearpygui as dpg
@@ -230,9 +260,12 @@ class HatchApp:
             return
         if not dest.lower().endswith(".svg"):
             dest += ".svg"
+        # prefer the cleaned (connector-broken) SVG when the break tool produced one
+        src = self._broken_svg() or self.result["svg_path"]
+        kind = "cleaned" if self._broken_svg() else "raw (connectors not yet cut)"
         try:
-            shutil.copyfile(self.result["svg_path"], dest)
-            dpg.set_value("status", f"Exported  →  {dest}")
+            shutil.copyfile(src, dest)
+            dpg.set_value("status", f"Exported {kind}  →  {dest}")
         except Exception as e:
             dpg.set_value("status", f"Export failed: {e}")
 
@@ -250,9 +283,11 @@ class HatchApp:
         dpg.set_value("m_draw", f"{res['draw_m']:.0f} m")
         dpg.set_value("m_time", f"~{res['est_hours']:.1f} h")
         dpg.configure_item("btn_export", enabled=True)
+        dpg.configure_item("btn_break", enabled=bool(res.get("sidecar")))
         self.export_ready = True
         dpg.set_value("status", f"Done in {res['elapsed_sec']:.1f}s. "
-                                f"Review, then Export SVG.")
+                                f"Open the Break tool to cut travel connectors, "
+                                f"then Export SVG.")
 
     # -- theme ---------------------------------------------------------------
     def _theme(self):
@@ -363,6 +398,15 @@ class HatchApp:
                                        tag="btn_convert", enabled=False,
                                        callback=self._on_convert)
                     dpg.bind_item_theme(b, accent_btn)
+                    dpg.add_spacer(height=6)
+                    dpg.add_text("5 · CLEAN UP CONNECTORS", color=MUTED)
+                    dpg.add_button(label="Break tool…", width=-1, height=34,
+                                   tag="btn_break", enabled=False,
+                                   callback=self._on_break_tool)
+                    dpg.add_text("single-path draws one stroke; cut the travel "
+                                 "lines that cross white, then Export.",
+                                 color=MUTED, wrap=290)
+                    dpg.add_spacer(height=8)
                     dpg.add_button(label="Export SVG…", width=-1, height=34,
                                    tag="btn_export", enabled=False,
                                    callback=self._on_export)

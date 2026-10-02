@@ -31,7 +31,8 @@ import dearpygui.dearpygui as dpg
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness as H
-from hatch_ui_nocairo import HatchConfig, strokes_to_single_d, write_svg, render_preview
+from hatch_ui_nocairo import (HatchConfig, strokes_to_single_d, write_svg,
+                              render_preview, cfg_from_snapshot)
 
 DISP_MAX = 900         # base display dimension (zoom in for detail)
 RADIUS_SCREEN = 12.0   # click / paint hit radius in screen px
@@ -49,7 +50,7 @@ def load_sidecar(path):
     with open(path, "r", encoding="utf-8") as f:
         d = json.load(f)
     strokes = [[(float(x), float(y)) for x, y in s] for s in d["strokes"]]
-    return int(d["width"]), int(d["height"]), strokes
+    return int(d["width"]), int(d["height"]), strokes, d.get("cfg")
 
 
 def connectors(strokes):
@@ -62,9 +63,10 @@ def connectors(strokes):
     return out
 
 
-def export_svg(strokes, broken, w, h, out_path):
-    """Write the SVG with `broken` connector indices as pen-ups."""
-    cfg = HatchConfig()
+def export_svg(strokes, broken, w, h, out_path, cfg_snap=None):
+    """Write the SVG with `broken` connector indices as pen-ups. Uses the output
+    size / stroke config captured in the sidecar so it matches the app's export."""
+    cfg = cfg_from_snapshot(cfg_snap)
     d = strokes_to_single_d(strokes, broken=broken)
     write_svg(out_path, [d], w, h, cfg)
     return out_path
@@ -85,7 +87,7 @@ def _seg_dist(px, py, ax, ay, bx, by):
 class BreakApp:
     def __init__(self, sidecar_path):
         self.path = sidecar_path
-        self.w, self.h, self.strokes = load_sidecar(sidecar_path)
+        self.w, self.h, self.strokes, self.cfg_snap = load_sidecar(sidecar_path)
         self.conns = connectors(self.strokes)
         self.broken = set()
         self.scale = min(DISP_MAX / max(self.w, 1), DISP_MAX / max(self.h, 1))
@@ -259,7 +261,7 @@ class BreakApp:
 
     def on_export(self):
         out = os.path.splitext(self.path)[0].replace("_strokes", "") + "_broken.svg"
-        export_svg(self.strokes, self.broken, self.w, self.h, out)
+        export_svg(self.strokes, self.broken, self.w, self.h, out, self.cfg_snap)
         dpg.set_value("status", f"Exported {out}  ({1 + len(self.broken)} pen lifts)")
         try:
             os.startfile(out)  # Windows

@@ -22,7 +22,7 @@ import time
 import queue
 import threading
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Tuple, Optional, Dict
 
 import numpy as np
@@ -833,6 +833,21 @@ def _compress_d(d: str, decimals: int) -> str:
     return " ".join(out)
 
 
+# Fields that determine the written SVG's physical size + stroke. Stored in the
+# single-path sidecar so the break tool's export matches the app's settings.
+_SIDECAR_CFG_FIELDS = ("out_width_in", "out_height_in", "stroke_width",
+                       "stroke_linecap", "stroke_linejoin", "svg_decimals")
+
+
+def cfg_snapshot(cfg: HatchConfig) -> dict:
+    return {k: getattr(cfg, k) for k in _SIDECAR_CFG_FIELDS}
+
+
+def cfg_from_snapshot(d: Optional[dict]) -> HatchConfig:
+    vals = {k: v for k, v in (d or {}).items() if k in _SIDECAR_CFG_FIELDS}
+    return replace(HatchConfig(), **vals)
+
+
 def write_svg(out_path: str, d_strings: List[str],
               img_w: int, img_h: int, cfg: HatchConfig,
               status_cb=None) -> None:
@@ -1178,7 +1193,7 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             import json as _json
             side = os.path.splitext(out_svg_path)[0] + "_strokes.json"
             with open(side, "w") as _f:
-                _json.dump({"width": w, "height": h,
+                _json.dump({"width": w, "height": h, "cfg": cfg_snapshot(cfg),
                             "strokes": [[[round(px, 1), round(py, 1)]
                                          for px, py in s] for s in ordered]}, _f)
         except Exception as _e:
@@ -1352,7 +1367,7 @@ def run_linespacing(png_path: str, arr: np.ndarray, cfg: HatchConfig,
         try:
             import json as _json
             with open(os.path.splitext(out_svg_path)[0] + "_strokes.json", "w") as _f:
-                _json.dump({"width": w, "height": h,
+                _json.dump({"width": w, "height": h, "cfg": cfg_snapshot(cfg),
                             "strokes": [[[round(px, 1), round(py, 1)]
                                          for px, py in s] for s in ordered]}, _f)
         except Exception as _e:
