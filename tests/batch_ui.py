@@ -72,7 +72,7 @@ class BatchTester:
 
     # ── batch generation (worker thread) ─────────────────────────────────────
     def start(self, preset_names, image_paths, pen_lift_cap=0, single_path=False,
-              levels=0, ls_angle=-1.0, ls_step=0.0):
+              levels=0, ls_angle=-1.0, ls_step=0.0, deep_growth=-1.0):
         if self.running:
             return
         self.running = True
@@ -82,6 +82,7 @@ class BatchTester:
         self.levels = levels
         self.ls_angle = ls_angle
         self.ls_step = ls_step
+        self.deep_growth = deep_growth
         self.run_label = f"batch_{H.now_stamp()}"
         t = threading.Thread(target=self._run, args=(preset_names, image_paths),
                              daemon=True)
@@ -102,6 +103,12 @@ class BatchTester:
             # invent levels that aren't there.
             if getattr(self, "levels", 0) > 0:
                 cfg = replace(cfg, tonal_max_layers=int(self.levels))
+            # Deep-layer spacing growth (plot-time / dark-region ink dial).
+            # <0 = use preset; >=0 overrides. Deeper layers get wider spacing so
+            # the darkest regions aren't over-inked -> faster plot, look of the
+            # subject/mid-tones preserved.
+            if getattr(self, "deep_growth", -1.0) >= 0:
+                cfg = replace(cfg, tonal_deep_spacing_growth=float(self.deep_growth))
             # Live single-path override: one continuous stroke + a break-tool sidecar.
             if getattr(self, "single_path", False):
                 cfg = replace(cfg, tonal_single_path=True)
@@ -257,12 +264,15 @@ class BatchApp:
         levels = int(dpg.get_value("levels") or 0)
         ls_angle = float(dpg.get_value("ls_angle"))
         ls_step = float(dpg.get_value("ls_step") or 0)
+        deep_growth = float(dpg.get_value("deep_growth"))
         dpg.set_value("status", f"Running {len(images)}x{len(presets)} "
                                 f"(pen-lift cap {cap or 'preset'}"
                                 f"{', %d levels' % levels if levels else ''}"
+                                f"{', growth %.2f' % deep_growth if deep_growth >= 0 else ''}"
                                 f"{', single-path' if single else ''}) ...")
         self.bt.start(presets, images, pen_lift_cap=cap, single_path=single,
-                      levels=levels, ls_angle=ls_angle, ls_step=ls_step)
+                      levels=levels, ls_angle=ls_angle, ls_step=ls_step,
+                      deep_growth=deep_growth)
 
     def _open_break_tool(self, sender, app_data, user_data):
         # user_data = sidecar json path; launch the break tool on it (non-blocking)
@@ -413,6 +423,14 @@ class BatchApp:
                                   min_value=0, max_value=20, step=1, width=160)
                 dpg.add_text("flat-tone / graphic images: set the real # of tones "
                              "(e.g. 3-5) so levels aren't invented.",
+                             color=(150, 150, 150))
+            with dpg.group(horizontal=True):
+                dpg.add_slider_float(label="Deep-layer spacing growth (<0 = preset)",
+                                     tag="deep_growth", default_value=-1.0,
+                                     min_value=-1.0, max_value=0.8, width=200,
+                                     format="%.2f")
+                dpg.add_text("plot-time dial: higher = less ink in the darkest "
+                             "areas = faster. preset=0.30. try 0.15-0.5.",
                              color=(150, 150, 150))
             with dpg.group(horizontal=True):
                 dpg.add_input_float(label="Line angle", tag="ls_angle",

@@ -47,6 +47,11 @@ BASELINE = replace(
     # --- tonal-nuance wins ----------------------------------------------------
     tonal_angle_step=111.25,       # golden-ish angle spread -> less moire, smoother
     tonal_dither=0.6,              # anti-banding stipple (less needed w/ fine seg)
+    # --- plot-time win (real-world: 6h print was ~267m of pen-down) -----------
+    # Deep layers only appear in the darkest regions, which stack past ink
+    # saturation. Widening their spacing cuts ~40% of draw length + lifts with
+    # the subject/mid-tones untouched (darkest areas -> open crosshatch).
+    tonal_deep_spacing_growth=0.3,
     # --- final trace pass (dark regions only) ---------------------------------
     tonal_trace=True,
     tonal_trace_layers=1,          # outline only the darkest layer (fewer rings)

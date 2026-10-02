@@ -108,6 +108,12 @@ class HatchConfig:
     tonal_lo: float            = 0.08   # darkest layer threshold
 
     tonal_spacing_px: float    = 4.5
+    # Plot-time control: widen spacing for DEEPER layers so the darkest regions
+    # (which stack the most layers) aren't over-inked past paper saturation.
+    # layer i spacing = tonal_spacing_px * (1 + growth * i). 0.0 = off (uniform,
+    # original look). Only affects regions dark enough to reach the deep layers,
+    # so lighter areas are untouched -> big draw-time cut, minimal look change.
+    tonal_deep_spacing_growth: float = 0.0
 
     tonal_base_angle: float    = 25.0
 
@@ -1095,7 +1101,10 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
         if not polys:
             continue
         angle = float(cfg.tonal_base_angle) + float(cfg.tonal_angle_step) * i  # step 6
-        lines = make_parallel_lines(bounds, spacing, angle, phase=0.0)
+        # deeper layers (only present in the darkest regions) get wider spacing so
+        # near-black areas aren't drawn past ink saturation -> faster plot.
+        spacing_i = spacing * (1.0 + float(cfg.tonal_deep_spacing_growth) * i)
+        lines = make_parallel_lines(bounds, spacing_i, angle, phase=0.0)
         segs: List[LineString] = []
         for poly in polys:
             segs.extend(clip_lines_to_polygon(lines, poly))
@@ -1110,11 +1119,11 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
         # step 5: 1 layer = 1 path, greedy NN tour to minimise pen lifts
         if cfg.tonal_greedy_stitch:
             d = stitch_segs_greedy(
-                segs, spacing * float(cfg.tonal_join_mult),
+                segs, spacing_i * float(cfg.tonal_join_mult),
                 mask=mask if cfg.tonal_hide_travel else None,
-                short_join=spacing * 1.6)
+                short_join=spacing_i * 1.6)
         else:
-            d = stitch_segs_to_d_string(segs, spacing * 1.4)
+            d = stitch_segs_to_d_string(segs, spacing_i * 1.4)
         if d:
             all_d.append(d)
             if log: log(f"Tonal layer {i+1}: tone<{th:.2f} ang={angle:.0f} "
