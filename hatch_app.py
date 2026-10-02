@@ -132,7 +132,8 @@ class HatchApp:
         import dearpygui.dearpygui as dpg
         try:
             size_in = float(dpg.get_value("size_in"))
-            growth = float(dpg.get_value("growth"))
+            # Speed is opt-in: off -> g=0 = the full-quality printed look.
+            growth = float(dpg.get_value("growth")) if dpg.get_value("use_speed") else 0.0
             levels = int(dpg.get_value("levels") or 0)
             stamp = time.strftime("%Y%m%d_%H%M%S")
             out = os.path.join(APP_OUT, f"hatch_{stamp}.svg")
@@ -157,11 +158,41 @@ class HatchApp:
         dpg.add_image(tag, width=int(w * scale), height=int(h * scale),
                       parent=slot, tag=tag + "_img")
 
+    # -- native file dialogs (real Windows Explorer) -------------------------
+    @staticmethod
+    def _native_open():
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk(); root.withdraw()
+        root.attributes("-topmost", True); root.update()
+        path = filedialog.askopenfilename(
+            parent=root, title="Choose an image",
+            filetypes=[("Images", "*.jpg *.jpeg *.png *.webp *.bmp"),
+                       ("All files", "*.*")])
+        root.destroy()
+        return path
+
+    @staticmethod
+    def _native_save(default_name="hatch.svg"):
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk(); root.withdraw()
+        root.attributes("-topmost", True); root.update()
+        path = filedialog.asksaveasfilename(
+            parent=root, title="Export SVG", defaultextension=".svg",
+            initialfile=default_name,
+            filetypes=[("SVG vector", "*.svg"), ("All files", "*.*")])
+        root.destroy()
+        return path
+
     # -- callbacks -----------------------------------------------------------
-    def _on_pick_image(self, sender, app_data):
+    def _on_load(self):
         import dearpygui.dearpygui as dpg
-        sel = app_data.get("selections") or {}
-        path = next(iter(sel.values()), None) or app_data.get("file_path_name")
+        try:
+            path = self._native_open()
+        except Exception as e:
+            dpg.set_value("status", f"File dialog error: {e}")
+            return
         if not path or not os.path.isfile(path):
             return
         self.img_path = path
@@ -169,6 +200,10 @@ class HatchApp:
         self._show_image("src_tex", path, "src_slot")
         dpg.configure_item("btn_convert", enabled=True)
         dpg.set_value("status", "Ready. Hit Convert.")
+
+    def _on_toggle_speed(self, sender, val):
+        import dearpygui.dearpygui as dpg
+        dpg.configure_item("growth", enabled=bool(val))
 
     def _on_convert(self):
         import dearpygui.dearpygui as dpg
@@ -181,11 +216,16 @@ class HatchApp:
         dpg.set_value("status", "Converting…  (dense images can take a minute)")
         threading.Thread(target=self._do_convert, daemon=True).start()
 
-    def _on_export(self, sender, app_data):
+    def _on_export(self):
         import dearpygui.dearpygui as dpg
         if not (self.result and self.result.get("svg_path")):
             return
-        dest = app_data.get("file_path_name")
+        base = os.path.splitext(os.path.basename(self.img_path or "hatch"))[0]
+        try:
+            dest = self._native_save(default_name=f"{base}_hatch.svg")
+        except Exception as e:
+            dpg.set_value("status", f"File dialog error: {e}")
+            return
         if not dest:
             return
         if not dest.lower().endswith(".svg"):
@@ -274,17 +314,6 @@ class HatchApp:
     def _build(self, accent_btn, title_font):
         import dearpygui.dearpygui as dpg
 
-        with dpg.file_dialog(directory_selector=False, show=False, modal=True,
-                             width=720, height=460, tag="dlg_open",
-                             callback=self._on_pick_image):
-            dpg.add_file_extension("Images (*.jpg *.jpeg *.png *.webp *.bmp){"
-                                   ".jpg,.jpeg,.png,.webp,.bmp}")
-            dpg.add_file_extension(".*")
-        with dpg.file_dialog(directory_selector=False, show=False, modal=True,
-                             width=720, height=460, tag="dlg_save",
-                             default_filename="hatch", callback=self._on_export):
-            dpg.add_file_extension(".svg")
-
         with dpg.window(tag="main"):
             # header
             t = dpg.add_text("HATCH")
@@ -300,7 +329,7 @@ class HatchApp:
                 with dpg.child_window(width=330, autosize_y=True, border=True):
                     dpg.add_text("1 · IMAGE", color=MUTED)
                     dpg.add_button(label="  Load image…  ", width=-1,
-                                   callback=lambda: dpg.show_item("dlg_open"))
+                                   callback=self._on_load)
                     dpg.add_text("(none)", tag="filename", color=MUTED, wrap=290)
                     dpg.add_spacer(height=12)
 
@@ -310,14 +339,17 @@ class HatchApp:
                                          format="%.1f in (longest side)", width=-1)
                     dpg.add_spacer(height=12)
 
-                    dpg.add_text("3 · SPEED  /  INK", color=MUTED)
+                    dpg.add_text("3 · SPEED  (optional)", color=MUTED)
+                    dpg.add_checkbox(label="Speed up (less ink in dark areas)",
+                                     tag="use_speed", default_value=False,
+                                     callback=self._on_toggle_speed)
                     dpg.add_slider_float(
-                        tag="growth",
-                        default_value=float(BASELINE.tonal_deep_spacing_growth),
-                        min_value=0.0, max_value=0.6,
+                        tag="growth", default_value=0.30, enabled=False,
+                        min_value=0.05, max_value=0.6,
                         format="%.2f", width=-1)
-                    dpg.add_text("higher = less ink in the darkest areas = "
-                                 "faster plot", color=MUTED, wrap=290)
+                    dpg.add_text("Off = full quality (the look you printed). "
+                                 "On = trade dark-area ink for a faster plot.",
+                                 color=MUTED, wrap=290)
                     dpg.add_spacer(height=12)
 
                     dpg.add_text("4 · DARKNESS LEVELS", color=MUTED)
@@ -333,7 +365,7 @@ class HatchApp:
                     dpg.bind_item_theme(b, accent_btn)
                     dpg.add_button(label="Export SVG…", width=-1, height=34,
                                    tag="btn_export", enabled=False,
-                                   callback=lambda: dpg.show_item("dlg_save"))
+                                   callback=self._on_export)
 
                 # ── right: previews + metrics ───────────────────────────────
                 with dpg.child_window(width=-1, autosize_y=True, border=True):
@@ -392,16 +424,16 @@ class HatchApp:
 
 
 def _selftest():
-    """Headless: exercise the convert + estimate path (no GUI)."""
+    """Headless: exercise the convert + estimate path (no GUI) for both the
+    default (speed OFF = full printed look) and speed-ON settings."""
     img = os.path.join(_REPO, "tests", "images", "portrait_lowkey.jpg")
-    out = os.path.join(APP_OUT, "_selftest.svg")
-    s = convert(img, out, size_in=12.0,
-                growth=float(BASELINE.tonal_deep_spacing_growth), levels=0)
-    print(f"baseline growth = {BASELINE.tonal_deep_spacing_growth}")
-    print(f"paths={s['paths']}  lifts={s['pen_lifts_est']}  "
-          f"draw={s['draw_m']:.0f} m  est~{s['est_hours']:.1f} h")
-    print(f"preview: {s['preview_png']}")
-    assert os.path.exists(s["svg_path"]) and os.path.exists(s["preview_png"])
+    for label, g in [("default / speed OFF (g=0.0)", 0.0),
+                     ("speed ON (g=0.30)", 0.30)]:
+        out = os.path.join(APP_OUT, "_selftest.svg")
+        s = convert(img, out, size_in=12.0, growth=g, levels=0)
+        print(f"{label:28s} paths={s['paths']:3d} lifts={s['pen_lifts_est']:4d} "
+              f"draw={s['draw_m']:4.0f} m  est~{s['est_hours']:.1f} h")
+        assert os.path.exists(s["svg_path"]) and os.path.exists(s["preview_png"])
     print("SELFTEST OK")
 
 

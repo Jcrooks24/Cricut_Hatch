@@ -32,9 +32,12 @@ Convert → see a live preview, path/pen-lift count, drawn length and an estimat
 Cricut plot time → **Export SVG**. A few dials cover what matters for a print:
 
 - **Output size** — longest side in inches.
-- **Speed / ink** — deep-layer spacing growth; higher = less ink in the darkest
-  areas = faster plot (baseline 0.30; a 6 h print drops to ~2 h at this setting).
+- **Speed (optional)** — off by default, so Convert reproduces the full-quality
+  look you printed. Tick it to trade dark-area ink for a faster plot (e.g. a
+  ~3.8 h portrait drops to ~2.1 h); the slider sets how aggressive.
 - **Darkness levels** — 0 = auto; set the real tone count for flat / graphic art.
+
+Load / Export use the native Windows file explorer.
 
 (`py -3.11 hatch_app.py --selftest` runs the convert/estimate path headless.)
 
