@@ -8,6 +8,7 @@ env/
 # Generated run artifacts — heavy + regenerable. The valuable feedback
 # (grades.jsonl, baseline.json) is tracked explicitly below.
 results/runs/
+results/app/
 
 # HED model weights (downloaded on demand, large)
 *.caffemodel
