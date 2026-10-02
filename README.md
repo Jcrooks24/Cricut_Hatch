@@ -20,8 +20,26 @@ each layer uses a different angle so passes don't overlap. Options:
 - **SVG compression** — coordinate rounding + implicit lineto for small files
 
 `hatch_ui_nocairo.py` is a library; call `hatch_pipeline(png, out_svg, cfg)`.
-The front-ends are the **batch cockpit** (`tests/batch_ui.py`) and the
-**stitch-break tool** (`tests/break_tool.py`).
+
+## The Hatch app (the actual tool)
+
+```bash
+py -3.11 hatch_app.py
+```
+
+A standalone desktop app wired to the printed **baseline**: load one photo →
+Convert → see a live preview, path/pen-lift count, drawn length and an estimated
+Cricut plot time → **Export SVG**. A few dials cover what matters for a print:
+
+- **Output size** — longest side in inches.
+- **Speed / ink** — deep-layer spacing growth; higher = less ink in the darkest
+  areas = faster plot (baseline 0.30; a 6 h print drops to ~2 h at this setting).
+- **Darkness levels** — 0 = auto; set the real tone count for flat / graphic art.
+
+(`py -3.11 hatch_app.py --selftest` runs the convert/estimate path headless.)
+
+The **batch cockpit** (`tests/batch_ui.py`) and **stitch-break tool**
+(`tests/break_tool.py`) are the test/grading front-ends, below.
 
 ## Install
 
