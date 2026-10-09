@@ -9,3 +9,8 @@ scipy            # cKDTree nearest-neighbour stitching
 # Interactive front-ends (batch cockpit + stitch-break tool)
 dearpygui
 pywebview
+# pywebview's Windows (WinForms/WebView2) backend uses pythonnet. Pin to 3.0.3:
+# pythonnet 3.2.x triggers an infinite-recursion bug on WebView2 window init
+# (window.native.AccessibilityObject.Bounds...) that leaves the app "not
+# responding". 3.0.3 initialises cleanly.
+pythonnet==3.0.3

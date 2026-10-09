@@ -246,14 +246,21 @@ def _page_html():
 
 
 def main():
+    import traceback
     import webview
     os.makedirs(APP_OUT, exist_ok=True)
-    api = Api()
-    api.window = webview.create_window(
-        "Hatch", html=_page_html(), js_api=api,
-        width=1280, height=880, min_size=(980, 680),
-        background_color="#F7F6F2")
-    webview.start()
+    try:
+        api = Api()
+        api.window = webview.create_window(
+            "Hatch", html=_page_html(), js_api=api,
+            width=1280, height=880, min_size=(980, 680),
+            background_color="#F7F6F2")
+        webview.start()
+    except Exception:
+        # The desktop shortcut runs pythonw (no console); record why we failed.
+        with open(os.path.join(APP_OUT, "hatch_error.log"), "w", encoding="utf-8") as f:
+            f.write(traceback.format_exc())
+        raise
 
 
 def _selftest():
