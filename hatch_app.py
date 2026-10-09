@@ -45,12 +45,20 @@ DRAW_MM_S, TRAVEL_MM_S, VERTEX_S = 20.0, 100.0, 0.04
 
 # ── pipeline logic (no GUI, unit-testable headless) ───────────────────────────
 
-def build_cfg(size_in: float, growth: float, levels: int):
+def build_cfg(size_in: float, growth: float, levels: int, detail_regions=None):
     """Single-path config with the app's dials applied. size_in = longest side."""
     cfg = replace(BASELINE, out_width_in=float(size_in), out_height_in=float(size_in))
     cfg = replace(cfg, tonal_deep_spacing_growth=max(0.0, float(growth)))
     if levels and int(levels) > 0:
         cfg = replace(cfg, tonal_max_layers=int(levels))
+    if detail_regions:
+        # Circled areas keep finer features; everywhere else stays at the normal
+        # global min-area (so only the marked regions change).
+        regions = tuple((float(r["cx"]), float(r["cy"]), float(r["r"]))
+                        for r in detail_regions)
+        cfg = replace(cfg, detail_regions=regions, tonal_adaptive_min_area=True,
+                      tonal_min_area_flat=float(cfg.tonal_min_area_px2),
+                      tonal_min_area_detail=max(2.0, float(cfg.tonal_min_area_px2) * 0.2))
     return cfg
 
 
@@ -126,9 +134,9 @@ def analyze_image(path: str) -> dict:
 
 
 def convert(img_path: str, out_svg: str, size_in: float, growth: float, levels: int,
-            status_cb=None):
+            status_cb=None, detail_regions=None):
     os.makedirs(os.path.dirname(out_svg), exist_ok=True)
-    cfg = build_cfg(size_in, growth, levels)
+    cfg = build_cfg(size_in, growth, levels, detail_regions)
     stats = hatch_pipeline(img_path, out_svg, cfg, status_cb=status_cb,
                            log_cb=lambda m: None)
     draw_m, hours = estimate(out_svg, stats["work_w"], stats["work_h"], size_in)
@@ -181,10 +189,11 @@ class Api:
             self.size_in = float(params.get("size_in", 12.0))
             growth = float(params.get("growth", 0.0))
             levels = int(params.get("levels", 0) or 0)
+            regions = params.get("detail_regions") or []
             stamp = time.strftime("%Y%m%d_%H%M%S")
             out = os.path.join(APP_OUT, f"hatch_{stamp}.svg")
             s = convert(self.img_path, out, self.size_in, growth, levels,
-                        status_cb=self._push_status)
+                        status_cb=self._push_status, detail_regions=regions)
             self.svg_path = s["svg_path"]; self.sidecar = s["sidecar"]
             self.w, self.h, self.strokes, self.cfg_snap = load_sidecar(self.sidecar)
             # Only the travel connectors matter for cutting; sub-4px moves are

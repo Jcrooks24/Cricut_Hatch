@@ -136,6 +136,12 @@ class HatchConfig:
 
     tonal_detail_blur_px: float    = 24.0    # blur radius for the high-freq detail map
 
+    # User-painted detail regions (from the app's Detail step): circles the user
+    # drew around areas that need extra clarity. Each entry is (cx, cy, r)
+    # normalised to the image (cx,r by width; cy by height). When present, they
+    # OVERRIDE the auto detail map so only those areas get the fine min-area.
+    detail_regions: tuple          = ()
+
     # Tone-curve before thresholding. <1 lifts mid/light tones so they fall into
     # fewer layers (lighter overall) while pure blacks stay dark — keeps 10-layer
     # depth without the whole image going too dark. 1.0 = linear (no change).
@@ -1021,6 +1027,19 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
         hf = np.abs(arr_clean - lo_freq)
         mx = float(hf.max())
         detail_map = (hf / mx) if mx > 1e-6 else np.zeros_like(hf)
+    # User-painted detail regions OVERRIDE the auto map: 1 inside the circles
+    # (feathered), 0 elsewhere. With tonal_min_area_flat = the normal global
+    # min-area, areas outside the circles render exactly as before, while the
+    # circled areas drop to tonal_min_area_detail so fine features survive.
+    if cfg.detail_regions:
+        Hc, Wc = arr_clean.shape
+        yy, xx = np.mgrid[0:Hc, 0:Wc]
+        um = np.zeros((Hc, Wc), np.float32)
+        for (cxn, cyn, rn) in cfg.detail_regions:
+            cx, cy, rr = cxn * Wc, cyn * Hc, max(2.0, rn * Wc)
+            d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+            um = np.maximum(um, np.clip((1.25 * rr - d) / (0.25 * rr), 0.0, 1.0))
+        detail_map = um
     # ---------------------------------------------------------------------------
 
     # Ordered dither: nudge each pixel's tone by up to +/- half a threshold step

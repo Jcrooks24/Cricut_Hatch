@@ -227,8 +227,8 @@
   .legend{display:flex;gap:16px;font-size:12.5px;color:var(--muted)}
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .legend i{width:16px;height:3px;border-radius:2px;display:inline-block}
-  #breakCanvas{width:100%;display:block;border:1px solid var(--rule);border-radius:var(--r);
-    background:var(--panel-2);cursor:crosshair;touch-action:none}
+  #breakCanvas,#detailCanvas{width:100%;display:block;border:1px solid var(--rule);
+    border-radius:var(--r);background:var(--panel-2);cursor:crosshair;touch-action:none}
   .mini-range{display:flex;align-items:center;gap:10px;min-width:230px}
   .mini-range input{flex:1}
 
@@ -279,9 +279,10 @@
         <li class="step" data-step="0"><span class="dot">1</span><span class="lbl"><b>Import</b><small>choose a photo</small></span></li>
         <li class="step" data-step="1"><span class="dot">2</span><span class="lbl"><b>Size</b><small>output dimensions</small></span></li>
         <li class="step" data-step="2"><span class="dot">3</span><span class="lbl"><b>Fine-tune</b><small>match the image</small></span></li>
-        <li class="step" data-step="3"><span class="dot">4</span><span class="lbl"><b>Generate</b><small>render the hatch</small></span></li>
-        <li class="step" data-step="4"><span class="dot">5</span><span class="lbl"><b>Refine</b><small>cut connectors</small></span></li>
-        <li class="step" data-step="5"><span class="dot">6</span><span class="lbl"><b>Export</b><small>save the SVG</small></span></li>
+        <li class="step" data-step="3"><span class="dot">4</span><span class="lbl"><b>Detail</b><small>mark key areas</small></span></li>
+        <li class="step" data-step="4"><span class="dot">5</span><span class="lbl"><b>Generate</b><small>render the hatch</small></span></li>
+        <li class="step" data-step="5"><span class="dot">6</span><span class="lbl"><b>Refine</b><small>cut connectors</small></span></li>
+        <li class="step" data-step="6"><span class="dot">7</span><span class="lbl"><b>Export</b><small>save the SVG</small></span></li>
       </ol>
     </nav>
 
@@ -378,9 +379,30 @@
         </div>
       </section>
 
-      <!-- 4 · GENERATE -->
+      <!-- 4 · DETAIL -->
       <section class="screen" data-screen="3">
-        <p class="eyebrow">Step 4 · Generate</p>
+        <p class="eyebrow">Step 4 · Detail</p>
+        <h1>Mark what needs extra detail.</h1>
+        <p class="lede">Drag a circle around any area that should keep its fine detail, like eyes,
+          lettering, or intricate texture. Hatch preserves smaller features there. This is optional,
+          so skip it if the whole image reads well.</p>
+
+        <div class="break-top">
+          <div class="break-tools">
+            <span class="seg">drag on the image to circle an area</span>
+            <button class="btn link" id="undoRegion">Undo</button>
+            <button class="btn link" id="clearRegions">Clear</button>
+          </div>
+          <div class="legend">
+            <span class="readout">marked regions: <b id="regionCount" style="color:var(--ink)">0</b></span>
+          </div>
+        </div>
+        <canvas id="detailCanvas" width="960" height="520"></canvas>
+      </section>
+
+      <!-- 5 · GENERATE -->
+      <section class="screen" data-screen="4">
+        <p class="eyebrow">Step 5 · Generate</p>
         <h1>Your line art.</h1>
         <p class="lede">One continuous stroke, rendered from your settings. The thin lines crossing
           open areas are travel connectors, and you'll cut those next.</p>
@@ -405,9 +427,9 @@
         </div>
       </section>
 
-      <!-- 5 · REFINE (break tool) -->
-      <section class="screen" data-screen="4">
-        <p class="eyebrow">Step 5 · Refine</p>
+      <!-- 6 · REFINE (break tool) -->
+      <section class="screen" data-screen="5">
+        <p class="eyebrow">Step 6 · Refine</p>
         <h1>Cut the travel connectors.</h1>
         <p class="lede">Red lines are drawn on paper; they cross open space to keep one continuous
           stroke. Click to cut one (turns green = pen lift). Drag to cut many. Scroll to zoom.</p>
@@ -431,9 +453,9 @@
         <canvas id="breakCanvas" width="960" height="560"></canvas>
       </section>
 
-      <!-- 6 · EXPORT -->
-      <section class="screen" data-screen="5">
-        <p class="eyebrow">Step 6 · Export</p>
+      <!-- 7 · EXPORT -->
+      <section class="screen" data-screen="6">
+        <p class="eyebrow">Step 7 · Export</p>
         <h1>Ready to plot.</h1>
         <p class="lede">Save a plotter-ready SVG. Load it in Cricut Design Space and draw with a
           pen of your choice.</p>
@@ -478,24 +500,27 @@ const hasAPI = () => !!(window.pywebview && window.pywebview.api);
 
 const S = {           // app state
   step:0, img:null, sizeIn:12, aspect:1.5, levels:0, speed:false, growth:0.30,
-  result:null, cuts:new Set(), shownConns:[], minLen:26,
+  regions:[], result:null, cuts:new Set(), shownConns:[], minLen:26,
 };
+const LAST=6;         // Export is the final step index
 
 /* ── navigation ─────────────────────────────────────────────────────────── */
 /* The footer is purely navigation (Back / Next). Step actions live on their own
-   screens: Generate on step 4, Export on step 6. */
+   screens: Generate on step 5, Export on step 7. Steps:
+   0 Import · 1 Size · 2 Fine-tune · 3 Detail · 4 Generate · 5 Refine · 6 Export */
 const screens=[...document.querySelectorAll('.screen')];
 const stepEls=[...document.querySelectorAll('.step')];
 const titles=['Choose a photo to begin','Set the output size','Tune for your image',
-  'Render your line art','Cut the travel connectors','Save your SVG'];
+  'Circle areas that need detail','Render your line art','Cut the travel connectors',
+  'Save your SVG'];
 const nextBtn=document.getElementById('nextBtn');
 const backBtn=document.getElementById('backBtn');
 
-function reached(){ return S.img ? (S.result ? 5 : 3) : 0; }  // furthest unlocked
-function locked(i){ return (i>0 && !S.img) || (i>=4 && !S.result); }
+function reached(){ return S.img ? (S.result ? LAST : 4) : 0; }  // furthest unlocked
+function locked(i){ return (i>0 && !S.img) || (i>=5 && !S.result); }  // Refine/Export need a render
 
 function go(n){
-  n=Math.max(0,Math.min(5,n));
+  n=Math.max(0,Math.min(LAST,n));
   if(locked(n)) return;
   S.step=n;
   screens.forEach(s=>s.classList.toggle('active',+s.dataset.screen===n));
@@ -506,14 +531,15 @@ function go(n){
   });
   backBtn.hidden = n===0;
   document.getElementById('footHint').textContent = titles[n];
-  if(n===3) updateGenView();
+  if(n===3) initDetail();
+  if(n===4) updateGenView();
   refreshNext();
   document.getElementById('stage').scrollTop=0;
-  if(n===4) drawBreak();
+  if(n===5) drawBreak();
 }
 function refreshNext(){
   const n=S.step;
-  nextBtn.hidden = n===5;                        // nothing after Export
+  nextBtn.hidden = n===LAST;                     // nothing after Export
   nextBtn.textContent='Next →';
   nextBtn.disabled = locked(n+1);                // can't advance until step is satisfied
 }
@@ -540,6 +566,7 @@ async function pickImage(){
   document.getElementById('loaded').hidden=false;
   document.getElementById('recoText').innerHTML=`<b>${info.reco}</b> Suggested: 8 darkness levels,
     speed off (full detail). Turn speed on only if the plot time runs long.`;
+  S.regions=[]; S.result=null;
   updateSize(); invalidate(); go(0);
 }
 document.getElementById('dropzone').onclick=pickImage;
@@ -613,7 +640,7 @@ async function generate(){
   let r;
   try{
     if(hasAPI()){ r=await window.pywebview.api.generate({size_in:S.sizeIn,levels:S.levels,
-        growth:S.speed?S.growth:0}); }
+        growth:S.speed?S.growth:0, detail_regions:S.regions}); }
     else { for(let i=1;i<=8;i++){ await new Promise(s=>setTimeout(s,90));
         window.hatchStatus('Tonal layer '+i+'/8…'); }
       window.hatchStatus('Writing SVG…'); await new Promise(s=>setTimeout(s,160));
@@ -633,12 +660,56 @@ async function generate(){
   document.getElementById('mDraw').textContent=r.draw_m+' m';
   document.getElementById('mPaths').textContent=r.paths;
   setTimeout(()=>{ gp.hidden=true; document.getElementById('genBtn').hidden=false;
-    updateGenView(); refreshNext(); go(3); }, 250);
+    updateGenView(); refreshNext(); go(4); }, 250);
 }
 document.getElementById('genBtn').onclick=generate;
 document.getElementById('regenBtn').onclick=()=>{ S.result=null; updateGenView(); refreshNext(); generate(); };
 
-/* ── step 5 · break tool (canvas) ───────────────────────────────────────── */
+/* ── step 4 · detail regions (canvas) ───────────────────────────────────── */
+/* Circles are stored normalised to the source image (cx,r by width, cy by
+   height) so they map cleanly onto the work-resolution render. */
+const dcv=document.getElementById('detailCanvas'), dcx=dcv.getContext('2d');
+let dimg=new Image(), dView={scale:1,ox:0,oy:0};
+function initDetail(){
+  if(!S.img) return;
+  if(dimg.src!==S.img.thumb){ dimg=new Image();
+    dimg.onload=()=>{ fitDetail(); drawDetail(); }; dimg.src=S.img.thumb; return; }
+  fitDetail(); drawDetail();
+}
+function fitDetail(){ const r=dcv.getBoundingClientRect(), cw=r.width, ch=520;
+  const s=Math.min(cw/dimg.naturalWidth, ch/dimg.naturalHeight);
+  dView={scale:s, ox:(cw-dimg.naturalWidth*s)/2, oy:(ch-dimg.naturalHeight*s)/2}; }
+function dToImg(mx,my){ return [(mx-dView.ox)/dView.scale, (my-dView.oy)/dView.scale]; }
+function drawDetail(preview){
+  const dpr=window.devicePixelRatio||1, r=dcv.getBoundingClientRect(), cw=r.width, ch=520;
+  dcv.width=cw*dpr; dcv.height=ch*dpr; dcx.setTransform(dpr,0,0,dpr,0,0);
+  dcx.clearRect(0,0,cw,ch);
+  const {scale:s,ox,oy}=dView, NW=dimg.naturalWidth, NH=dimg.naturalHeight;
+  if(dimg.complete && NW) dcx.drawImage(dimg, ox, oy, NW*s, NH*s);
+  const acc=css('--accent');
+  const circ=(cxp,cyp,rp,solid)=>{ dcx.beginPath(); dcx.arc(cxp,cyp,Math.max(1,rp),0,Math.PI*2);
+    dcx.globalAlpha=.16; dcx.fillStyle=acc; dcx.fill(); dcx.globalAlpha=1;
+    dcx.lineWidth=2; dcx.setLineDash(solid?[]:[6,5]); dcx.strokeStyle=acc; dcx.stroke();
+    dcx.setLineDash([]); };
+  S.regions.forEach(rg=> circ(ox+rg.cx*NW*s, oy+rg.cy*NH*s, rg.r*NW*s, true));
+  if(preview) circ(ox+preview.cx*s, oy+preview.cy*s, preview.r*s, false);   // preview in image px
+  document.getElementById('regionCount').textContent=S.regions.length;
+}
+let dDrawing=false, dC0=null;
+dcv.addEventListener('pointerdown',e=>{ dcv.setPointerCapture(e.pointerId);
+  const r=dcv.getBoundingClientRect(); dC0=dToImg(e.clientX-r.left, e.clientY-r.top); dDrawing=true; });
+dcv.addEventListener('pointermove',e=>{ if(!dDrawing) return;
+  const r=dcv.getBoundingClientRect(), p=dToImg(e.clientX-r.left, e.clientY-r.top);
+  drawDetail({cx:dC0[0], cy:dC0[1], r:Math.hypot(p[0]-dC0[0], p[1]-dC0[1])}); });
+dcv.addEventListener('pointerup',e=>{ if(!dDrawing) return; dDrawing=false;
+  const r=dcv.getBoundingClientRect(), p=dToImg(e.clientX-r.left, e.clientY-r.top);
+  const rad=Math.hypot(p[0]-dC0[0], p[1]-dC0[1]), NW=dimg.naturalWidth, NH=dimg.naturalHeight;
+  if(rad*dView.scale>8){ S.regions.push({cx:dC0[0]/NW, cy:dC0[1]/NH, r:rad/NW}); invalidate(); }
+  drawDetail(); });
+document.getElementById('undoRegion').onclick=()=>{ S.regions.pop(); invalidate(); drawDetail(); };
+document.getElementById('clearRegions').onclick=()=>{ S.regions=[]; invalidate(); drawDetail(); };
+
+/* ── step 6 · break tool (canvas) ───────────────────────────────────────── */
 /* Connectors live in IMAGE pixel space (0..imgW, 0..imgH); the faded art fills
    the same rectangle, so a single scale+offset transform keeps them aligned. */
 const cv=document.getElementById('breakCanvas'), cx=cv.getContext('2d');
@@ -740,9 +811,13 @@ document.getElementById('themeBtn').onclick=()=>{
   const cur=document.documentElement.getAttribute('data-theme')
     || (matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');
   document.documentElement.setAttribute('data-theme', cur==='dark'?'light':'dark');
-  if(S.step===4) drawBreak();
+  if(S.step===3) drawDetail();
+  if(S.step===5) drawBreak();
 };
-window.addEventListener('resize',()=>{if(S.step===4){S.needFit=true;drawBreak();}});
+window.addEventListener('resize',()=>{
+  if(S.step===3) drawDetail();
+  if(S.step===5){S.needFit=true;drawBreak();}
+});
 
 /* custom logo (dropped in hatch_web/logo.*) replaces the built-in mark */
 if(ASSETS && ASSETS.logo){

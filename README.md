@@ -37,11 +37,14 @@ pipeline. The workflow is a guided set of screens:
 2. **Size** — set the longest side in inches; proportions follow.
 3. **Fine-tune** — darkness levels and an optional speed dial (off = full
    quality), with a recommendation from what the image looks like.
-4. **Generate** — renders the line art with live metrics (paths, pen lifts,
+4. **Detail** — drag circles around areas that need extra clarity (eyes,
+   lettering, texture). Those regions keep finer features (smaller min-area) so
+   detail survives; the rest of the image is unchanged. Optional.
+5. **Generate** — renders the line art with live metrics (paths, pen lifts,
    drawn length, estimated Cricut plot time).
-5. **Refine** — the built-in break tool: an in-app canvas to cut the travel
+6. **Refine** — the built-in break tool: an in-app canvas to cut the travel
    connectors (click to cut, drag to cut many, scroll to zoom).
-6. **Export** — writes the connector-cleaned, plotter-ready SVG.
+7. **Export** — writes the connector-cleaned, plotter-ready SVG.
 
 (`py -3.11 hatch_app.py --selftest` runs the pipeline path headless, no window.)
 
