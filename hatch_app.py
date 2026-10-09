@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import math
 import os
 import re
@@ -124,10 +125,12 @@ def analyze_image(path: str) -> dict:
             "aspect": round(aspect, 4), "suggest_levels": lvl}
 
 
-def convert(img_path: str, out_svg: str, size_in: float, growth: float, levels: int):
+def convert(img_path: str, out_svg: str, size_in: float, growth: float, levels: int,
+            status_cb=None):
     os.makedirs(os.path.dirname(out_svg), exist_ok=True)
     cfg = build_cfg(size_in, growth, levels)
-    stats = hatch_pipeline(img_path, out_svg, cfg, log_cb=lambda m: None)
+    stats = hatch_pipeline(img_path, out_svg, cfg, status_cb=status_cb,
+                           log_cb=lambda m: None)
     draw_m, hours = estimate(out_svg, stats["work_w"], stats["work_h"], size_in)
     stats.update(draw_m=draw_m, est_hours=hours, svg_path=out_svg,
                  preview_png=os.path.splitext(out_svg)[0] + "_preview.png",
@@ -147,6 +150,14 @@ class Api:
         self.w = self.h = 0
         self.cfg_snap = None
         self.size_in = 12.0
+
+    def _push_status(self, msg):
+        """Forward a pipeline status line to the page's progress bar."""
+        try:
+            self.window.evaluate_js("window.hatchStatus && window.hatchStatus("
+                                    + json.dumps(str(msg)) + ")")
+        except Exception:
+            pass
 
     # step 1: import
     def pick_image(self):
@@ -172,7 +183,8 @@ class Api:
             levels = int(params.get("levels", 0) or 0)
             stamp = time.strftime("%Y%m%d_%H%M%S")
             out = os.path.join(APP_OUT, f"hatch_{stamp}.svg")
-            s = convert(self.img_path, out, self.size_in, growth, levels)
+            s = convert(self.img_path, out, self.size_in, growth, levels,
+                        status_cb=self._push_status)
             self.svg_path = s["svg_path"]; self.sidecar = s["sidecar"]
             self.w, self.h, self.strokes, self.cfg_snap = load_sidecar(self.sidecar)
             # Only the travel connectors matter for cutting; sub-4px moves are
@@ -208,8 +220,26 @@ class Api:
         return dest
 
 
+def _find_logo():
+    """A logo image dropped in hatch_web/ (logo.png|jpg|jpeg|svg|webp) is used in
+    the title bar in place of the built-in mark. Returns a data URI or None."""
+    base = os.path.join(_REPO, "hatch_web")
+    for ext, mime in (("png", "image/png"), ("svg", "image/svg+xml"),
+                      ("jpg", "image/jpeg"), ("jpeg", "image/jpeg"),
+                      ("webp", "image/webp")):
+        p = os.path.join(base, f"logo.{ext}")
+        if os.path.exists(p):
+            data = base64.b64encode(open(p, "rb").read()).decode()
+            return f"data:{mime};base64,{data}"
+    return None
+
+
 def _page_html():
-    body = open(TEMPLATE, encoding="utf-8").read().replace("__ASSETS__", "{}")
+    assets = {}
+    logo = _find_logo()
+    if logo:
+        assets["logo"] = logo
+    body = open(TEMPLATE, encoding="utf-8").read().replace("__ASSETS__", json.dumps(assets))
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>Hatch</title></head><body>" + body + "</body></html>")
