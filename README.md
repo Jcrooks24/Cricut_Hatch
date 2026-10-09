@@ -27,27 +27,23 @@ each layer uses a different angle so passes don't overlap. Options:
 py -3.11 hatch_app.py
 ```
 
-A standalone desktop app for the **single-path** methodology (the whole drawing
-as one continuous stroke = 1 pen lift). Workflow:
+A native desktop window (a web UI via `pywebview`) for the **single-path**
+methodology (the whole drawing as one continuous stroke = 1 pen lift). The UI
+lives in `hatch_web/template.html`; `hatch_app.py` serves it and bridges to the
+pipeline. The workflow is a guided set of screens:
 
-1. **Load image** (native Windows file picker).
-2. **Convert** — see a live preview, path/pen-lift count, drawn length and an
-   estimated Cricut plot time.
-3. **Break tool…** — single-path leaves visible travel connectors where the pen
-   crosses white to reach a far region; this opens the stitch-break tool to cut
-   them (each cut = one extra, worthwhile pen lift). Essential second step.
-4. **Export SVG** — saves the connector-cleaned SVG if you ran the break tool,
-   otherwise the raw single-path SVG. Native save dialog.
+1. **Import** — native file picker; Hatch reads the photo's tone / contrast /
+   detail to seed suggestions.
+2. **Size** — set the longest side in inches; proportions follow.
+3. **Fine-tune** — darkness levels and an optional speed dial (off = full
+   quality), with a recommendation from what the image looks like.
+4. **Generate** — renders the line art with live metrics (paths, pen lifts,
+   drawn length, estimated Cricut plot time).
+5. **Refine** — the built-in break tool: an in-app canvas to cut the travel
+   connectors (click to cut, drag to cut many, scroll to zoom).
+6. **Export** — writes the connector-cleaned, plotter-ready SVG.
 
-Dials that matter for a print:
-
-- **Output size** — longest side in inches.
-- **Speed (optional)** — off by default, so Convert reproduces the full-quality
-  look you printed. Tick it to trade dark-area ink for a faster plot; the slider
-  sets how aggressive.
-- **Darkness levels** — 0 = auto; set the real tone count for flat / graphic art.
-
-(`py -3.11 hatch_app.py --selftest` runs the convert/estimate path headless.)
+(`py -3.11 hatch_app.py --selftest` runs the pipeline path headless, no window.)
 
 The **batch cockpit** (`tests/batch_ui.py`) is the test/grading front-end, below.
 

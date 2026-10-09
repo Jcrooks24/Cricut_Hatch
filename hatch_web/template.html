@@ -1,0 +1,698 @@
+<style>
+  /* ── Hatch: design tokens ─────────────────────────────────────────────── */
+  :root{
+    --paper:#F7F6F2; --panel:#FFFFFF; --panel-2:#FCFBF8;
+    --ink:#1A1C20; --ink-soft:#3C3F46; --muted:#73757D; --faint:#9A9BA1;
+    --rule:#E6E4DD; --rule-strong:#D7D4CB;
+    --accent:#2F5BEA; --accent-press:#2347C4; --accent-ink:#FFFFFF; --accent-soft:#E9EEFD;
+    --keep:#D1403A; --cut:#3E9B6B;
+    --shadow-sm:0 1px 2px rgba(20,22,30,.05);
+    --shadow:0 2px 6px rgba(20,22,30,.05),0 14px 40px rgba(20,22,30,.07);
+    --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+    --mono:"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",ui-monospace,monospace;
+    --r:12px; --r-sm:8px; --maxw:1080px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --paper:#15171B; --panel:#1B1E23; --panel-2:#20242A;
+      --ink:#ECEBE7; --ink-soft:#C6C7CB; --muted:#9A9DA6; --faint:#6E7179;
+      --rule:#2A2E35; --rule-strong:#363B44;
+      --accent:#6A92FF; --accent-press:#88A7FF; --accent-ink:#0E1013; --accent-soft:#1E2633;
+      --keep:#E66A64; --cut:#5BBF8C;
+      --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+      --shadow:0 2px 6px rgba(0,0,0,.3),0 14px 40px rgba(0,0,0,.45);
+    }
+  }
+  :root[data-theme="light"]{
+    --paper:#F7F6F2; --panel:#FFFFFF; --panel-2:#FCFBF8;
+    --ink:#1A1C20; --ink-soft:#3C3F46; --muted:#73757D; --faint:#9A9BA1;
+    --rule:#E6E4DD; --rule-strong:#D7D4CB;
+    --accent:#2F5BEA; --accent-press:#2347C4; --accent-ink:#FFFFFF; --accent-soft:#E9EEFD;
+    --keep:#D1403A; --cut:#3E9B6B;
+    --shadow-sm:0 1px 2px rgba(20,22,30,.05);
+    --shadow:0 2px 6px rgba(20,22,30,.05),0 14px 40px rgba(20,22,30,.07);
+  }
+  :root[data-theme="dark"]{
+    --paper:#15171B; --panel:#1B1E23; --panel-2:#20242A;
+    --ink:#ECEBE7; --ink-soft:#C6C7CB; --muted:#9A9DA6; --faint:#6E7179;
+    --rule:#2A2E35; --rule-strong:#363B44;
+    --accent:#6A92FF; --accent-press:#88A7FF; --accent-ink:#0E1013; --accent-soft:#1E2633;
+    --keep:#E66A64; --cut:#5BBF8C;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+    --shadow:0 2px 6px rgba(0,0,0,.3),0 14px 40px rgba(0,0,0,.45);
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+    font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;
+    font-variant-numeric:tabular-nums;
+  }
+  .app{display:grid;grid-template-rows:auto 1fr;height:100vh;overflow:hidden}
+
+  /* ── top bar ──────────────────────────────────────────────────────────── */
+  .topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 24px;border-bottom:1px solid var(--rule);background:var(--panel);
+  }
+  .brand{display:flex;align-items:center;gap:11px}
+  .brand .mark{width:26px;height:26px;display:block}
+  .brand .word{font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:15px}
+  .brand .tag{color:var(--muted);font-size:12.5px;border-left:1px solid var(--rule-strong);
+    padding-left:11px;margin-left:3px}
+  .top-actions{display:flex;align-items:center;gap:8px}
+  .icon-btn{
+    appearance:none;border:1px solid var(--rule-strong);background:transparent;color:var(--muted);
+    width:34px;height:34px;border-radius:var(--r-sm);cursor:pointer;display:grid;place-items:center;
+    transition:border-color .15s,color .15s,background .15s;
+  }
+  .icon-btn:hover{color:var(--ink);border-color:var(--ink-soft)}
+
+  /* ── main split ───────────────────────────────────────────────────────── */
+  .main{display:grid;grid-template-columns:272px 1fr;min-height:0}
+  .rail{border-right:1px solid var(--rule);background:var(--panel);padding:30px 22px;overflow:auto}
+  .rail h2{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);
+    margin:0 0 20px 8px;font-weight:650}
+  .steps{list-style:none;margin:0;padding:0;position:relative}
+  .steps::before{content:"";position:absolute;left:24px;top:14px;bottom:14px;width:2px;
+    background:var(--rule);border-radius:2px}
+  .step{position:relative;display:flex;align-items:center;gap:13px;padding:9px 8px;border-radius:var(--r-sm);
+    cursor:pointer;color:var(--muted);transition:color .15s,background .15s;z-index:1}
+  .step:hover{background:var(--panel-2);color:var(--ink-soft)}
+  .step .dot{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+    background:var(--panel);border:2px solid var(--rule-strong);font-family:var(--mono);
+    font-size:13px;color:var(--muted);transition:all .2s}
+  .step .lbl{display:flex;flex-direction:column;line-height:1.25}
+  .step .lbl b{font-weight:600;font-size:14px;color:inherit}
+  .step .lbl small{font-size:11.5px;color:var(--faint)}
+  .step[aria-current="true"]{color:var(--ink)}
+  .step[aria-current="true"] .dot{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .step.done .dot{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+  .step.locked{opacity:.5;cursor:not-allowed}
+  .step.locked:hover{background:transparent;color:var(--muted)}
+
+  /* ── stage ────────────────────────────────────────────────────────────── */
+  .stage{overflow:auto;position:relative}
+  .screen{max-width:var(--maxw);margin:0 auto;padding:46px 48px 120px;display:none;
+    animation:rise .34s cubic-bezier(.2,.7,.2,1)}
+  .screen.active{display:block}
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){.screen{animation:none}}
+
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--accent);
+    text-transform:uppercase;margin:0 0 12px}
+  .screen h1{font-size:38px;line-height:1.08;letter-spacing:-.02em;font-weight:720;margin:0;
+    text-wrap:balance;max-width:16ch}
+  .lede{font-size:17px;color:var(--muted);margin:14px 0 0;max-width:58ch;line-height:1.55}
+
+  .footer-bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;
+    justify-content:space-between;gap:16px;padding:16px 48px;border-top:1px solid var(--rule);
+    background:color-mix(in srgb,var(--panel) 88%,transparent);backdrop-filter:blur(8px);
+    max-width:none}
+  .footer-inner{max-width:var(--maxw);margin:0 auto;width:100%;display:flex;align-items:center;
+    justify-content:space-between;gap:16px}
+  .hint{color:var(--muted);font-size:13.5px}
+
+  /* buttons */
+  .btn{appearance:none;font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;
+    border-radius:var(--r-sm);padding:12px 22px;border:1px solid transparent;transition:all .15s;
+    display:inline-flex;align-items:center;gap:9px}
+  .btn:focus-visible{outline:3px solid var(--accent-soft);outline-offset:1px}
+  .btn.primary{background:var(--accent);color:var(--accent-ink)}
+  .btn.primary:hover{background:var(--accent-press)}
+  .btn.primary:disabled{background:var(--rule-strong);color:var(--faint);cursor:not-allowed}
+  .btn.ghost{background:transparent;color:var(--ink-soft);border-color:var(--rule-strong)}
+  .btn.ghost:hover{border-color:var(--ink-soft);color:var(--ink)}
+  .btn.link{background:none;border:none;color:var(--muted);padding:12px 4px}
+  .btn.link:hover{color:var(--ink)}
+
+  /* generic cards / grid */
+  .grid{display:grid;gap:22px;margin-top:34px}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:var(--r);
+    box-shadow:var(--shadow-sm)}
+  .pad{padding:22px}
+  .label{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);
+    font-weight:650;margin:0 0 10px}
+
+  /* import dropzone */
+  .drop{margin-top:34px;border:1.5px dashed var(--rule-strong);border-radius:var(--r);
+    background:var(--panel-2);padding:54px 30px;text-align:center;transition:all .18s;cursor:pointer}
+  .drop:hover{border-color:var(--accent);background:var(--accent-soft)}
+  .drop .ic{width:46px;height:46px;margin:0 auto 16px;color:var(--accent)}
+  .drop b{font-size:17px;font-weight:650}
+  .drop p{color:var(--muted);margin:7px 0 0;font-size:14px}
+
+  .loaded{display:grid;grid-template-columns:300px 1fr;gap:28px;margin-top:34px;align-items:start}
+  .thumb{border-radius:var(--r);overflow:hidden;border:1px solid var(--rule);background:var(--panel);
+    box-shadow:var(--shadow-sm)}
+  .thumb img{display:block;width:100%;height:auto}
+  .filemeta{font-family:var(--mono);font-size:12.5px;color:var(--muted);margin-top:10px;
+    display:flex;justify-content:space-between;gap:12px}
+
+  /* characteristic chips */
+  .chips{display:flex;flex-wrap:wrap;gap:9px;margin-top:4px}
+  .chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;padding:7px 13px;border-radius:999px;
+    background:var(--panel-2);border:1px solid var(--rule);color:var(--ink-soft)}
+  .chip .k{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+
+  .readout{font-family:var(--mono);font-size:13px;color:var(--ink-soft)}
+
+  /* size presets */
+  .sizes{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px}
+  .size-opt{border:1px solid var(--rule-strong);background:var(--panel);border-radius:var(--r-sm);
+    padding:16px 14px;cursor:pointer;text-align:left;transition:all .15s}
+  .size-opt:hover{border-color:var(--ink-soft)}
+  .size-opt[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);
+    box-shadow:inset 0 0 0 1px var(--accent)}
+  .size-opt b{display:block;font-size:16px}
+  .size-opt small{color:var(--muted);font-family:var(--mono);font-size:11.5px}
+
+  /* sliders */
+  .ctl{margin-top:22px}
+  .ctl .row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:9px}
+  .ctl .val{font-family:var(--mono);font-size:14px;color:var(--accent);font-weight:600}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:4px;
+    background:var(--rule-strong);outline:none;margin:6px 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;
+    background:var(--accent);border:3px solid var(--panel);box-shadow:var(--shadow-sm);cursor:pointer;
+    transition:transform .12s}
+  input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.12)}
+  input[type=range]:disabled{opacity:.45}
+  input[type=range]:disabled::-webkit-slider-thumb{cursor:not-allowed}
+
+  /* toggle */
+  .switch{position:relative;display:inline-flex;align-items:center;gap:12px;cursor:pointer;user-select:none}
+  .switch input{position:absolute;opacity:0}
+  .track{width:44px;height:25px;border-radius:999px;background:var(--rule-strong);transition:background .18s;
+    flex:none}
+  .track::after{content:"";position:absolute;top:3px;left:3px;width:19px;height:19px;border-radius:50%;
+    background:#fff;box-shadow:var(--shadow-sm);transition:transform .18s}
+  .switch input:checked+.track{background:var(--accent)}
+  .switch input:checked+.track::after{transform:translateX(19px)}
+  .switch input:focus-visible+.track{outline:3px solid var(--accent-soft);outline-offset:2px}
+
+  .reco{display:flex;gap:13px;align-items:flex-start;margin-top:30px;padding:16px 18px;
+    background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 24%,transparent);
+    border-radius:var(--r);color:var(--ink-soft);font-size:14px;line-height:1.5}
+  .reco b{color:var(--ink)}
+  .reco .ic{flex:none;color:var(--accent);margin-top:1px}
+
+  /* generate / result */
+  .result{display:grid;grid-template-columns:1fr 300px;gap:28px;margin-top:34px;align-items:start}
+  .canvas-wrap{background:var(--panel);border:1px solid var(--rule);border-radius:var(--r);
+    box-shadow:var(--shadow);overflow:hidden;display:grid;place-items:center;padding:18px;min-height:360px}
+  .canvas-wrap img{max-width:100%;height:auto;display:block}
+  .metrics{display:flex;flex-direction:column;gap:2px}
+  .metric{padding:16px 18px;border:1px solid var(--rule);border-radius:var(--r-sm);background:var(--panel);
+    display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  .metric .k{font-size:12.5px;color:var(--muted)}
+  .metric .v{font-family:var(--mono);font-size:19px;font-weight:600}
+  .metric.hero-metric{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 24%,transparent)}
+  .metric.hero-metric .v{color:var(--accent)}
+
+  /* break tool */
+  .break-top{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;
+    margin-top:26px;margin-bottom:16px}
+  .break-tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .seg{display:inline-flex;align-items:center;gap:9px;font-size:13px;color:var(--muted)}
+  .legend{display:flex;gap:16px;font-size:12.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:16px;height:3px;border-radius:2px;display:inline-block}
+  #breakCanvas{width:100%;display:block;border:1px solid var(--rule);border-radius:var(--r);
+    background:var(--panel-2);cursor:crosshair;touch-action:none}
+  .mini-range{display:flex;align-items:center;gap:10px;min-width:230px}
+  .mini-range input{flex:1}
+
+  /* export */
+  .export-card{max-width:520px;margin-top:36px}
+  .summary{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule);
+    border:1px solid var(--rule);border-radius:var(--r);overflow:hidden}
+  .summary div{background:var(--panel);padding:18px 20px}
+  .summary .k{font-size:12px;color:var(--muted);margin-bottom:5px}
+  .summary .v{font-family:var(--mono);font-size:18px;font-weight:600}
+  .done-badge{display:inline-flex;align-items:center;gap:9px;color:var(--cut);font-weight:600;font-size:14px;
+    margin-top:20px}
+
+  @media (max-width:900px){
+    .main{grid-template-columns:1fr}
+    .rail{display:none}
+    .loaded,.result{grid-template-columns:1fr}
+    .sizes{grid-template-columns:repeat(2,1fr)}
+    .screen{padding:32px 22px 120px}
+    .footer-bar{padding:14px 22px}
+  }
+</style>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <rect x="1.5" y="1.5" width="29" height="29" rx="8" stroke="var(--accent)" stroke-width="2"/>
+        <path d="M7 19 L19 7 M11 23 L23 11 M15 25 L25 15 M7 13 L13 7" stroke="var(--accent)"
+          stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <span class="word">Hatch</span>
+      <span class="tag">photo → pen-plotter line art</span>
+    </div>
+    <div class="top-actions">
+      <button class="icon-btn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M19 5l-1.4 1.4M6.4 17.6 5 19"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="main">
+    <nav class="rail">
+      <h2>Workflow</h2>
+      <ol class="steps" id="steps">
+        <li class="step" data-step="0"><span class="dot">1</span><span class="lbl"><b>Import</b><small>choose a photo</small></span></li>
+        <li class="step" data-step="1"><span class="dot">2</span><span class="lbl"><b>Size</b><small>output dimensions</small></span></li>
+        <li class="step" data-step="2"><span class="dot">3</span><span class="lbl"><b>Fine-tune</b><small>match the image</small></span></li>
+        <li class="step" data-step="3"><span class="dot">4</span><span class="lbl"><b>Generate</b><small>render the hatch</small></span></li>
+        <li class="step" data-step="4"><span class="dot">5</span><span class="lbl"><b>Refine</b><small>cut connectors</small></span></li>
+        <li class="step" data-step="5"><span class="dot">6</span><span class="lbl"><b>Export</b><small>save the SVG</small></span></li>
+      </ol>
+    </nav>
+
+    <main class="stage" id="stage">
+
+      <!-- 1 · IMPORT -->
+      <section class="screen active" data-screen="0">
+        <p class="eyebrow">Step 1 · Import</p>
+        <h1>Start with a photo.</h1>
+        <p class="lede">Choose any image. Hatch reads its tone, contrast and detail to suggest
+          settings. You stay in control of every one.</p>
+
+        <div class="drop" id="dropzone" tabindex="0" role="button" aria-label="Choose an image">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+            stroke-linecap="round" stroke-linejoin="round"><path d="M21 15l-5-5L5 21"/>
+            <path d="M3 16V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/></svg>
+          <b>Choose an image</b>
+          <p>JPG, PNG, WEBP · or drag one in</p>
+        </div>
+
+        <div class="loaded" id="loaded" hidden>
+          <div>
+            <div class="thumb"><img id="srcImg" alt="Source photo"></div>
+            <div class="filemeta"><span id="fileName"></span><span id="filePx"></span></div>
+          </div>
+          <div>
+            <p class="label">What Hatch sees</p>
+            <div class="chips" id="chips"></div>
+            <p class="lede" style="font-size:15px;margin-top:20px" id="readNote"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2 · SIZE -->
+      <section class="screen" data-screen="1">
+        <p class="eyebrow">Step 2 · Output size</p>
+        <h1>How big should it draw?</h1>
+        <p class="lede">Set the longest side. Hatch keeps your photo's proportions, so the other
+          side follows automatically.</p>
+
+        <div class="grid" style="grid-template-columns:1fr;max-width:640px">
+          <div>
+            <p class="label">Common sizes</p>
+            <div class="sizes" id="sizes">
+              <button class="size-opt" data-in="8"><b>8″</b><small>8 × 5.3 in</small></button>
+              <button class="size-opt" data-in="11"><b>11″</b><small>11 × 7.3 in</small></button>
+              <button class="size-opt" aria-pressed="true" data-in="12"><b>12″</b><small>12 × 8.0 in</small></button>
+              <button class="size-opt" data-in="16"><b>16″</b><small>16 × 10.6 in</small></button>
+            </div>
+          </div>
+          <div class="ctl card pad">
+            <div class="row"><span class="label" style="margin:0">Longest side</span>
+              <span class="val" id="sizeVal">12.0 in</span></div>
+            <input type="range" id="sizeRange" min="4" max="24" step="0.5" value="12">
+            <div class="readout" style="margin-top:14px;display:flex;justify-content:space-between">
+              <span>final draw area</span><span id="sizeFinal">12.0 × 8.0 in</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3 · FINE-TUNE -->
+      <section class="screen" data-screen="2">
+        <p class="eyebrow">Step 3 · Fine-tune</p>
+        <h1>Tune it to the image.</h1>
+        <p class="lede">Starting points are chosen from what Hatch saw in your photo. Nudge them. The preview on the next step reflects every change.</p>
+
+        <div class="reco">
+          <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round"><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/>
+            <path d="M9 21h6M10 17v4M14 17v4"/></svg>
+          <div id="recoText"><b>This photo is textured and mid-key.</b> Suggested: 8 darkness levels,
+            speed off (full detail). Turn speed on only if the plot time runs long.</div>
+        </div>
+
+        <div class="grid" style="grid-template-columns:1fr 1fr;max-width:760px">
+          <div class="card pad ctl" style="margin-top:0">
+            <div class="row"><span class="label" style="margin:0">Darkness levels</span>
+              <span class="val" id="lvlVal">Auto</span></div>
+            <input type="range" id="lvlRange" min="0" max="12" step="1" value="0">
+            <p class="hint" style="margin:10px 0 0">0 = auto. Lower for flat / graphic art so tones
+              aren't invented.</p>
+          </div>
+          <div class="card pad ctl" style="margin-top:0">
+            <div class="row">
+              <label class="switch"><input type="checkbox" id="speedChk"><span class="track"></span>
+                <span class="label" style="margin:0">Speed up</span></label>
+              <span class="val" id="spdVal">off</span>
+            </div>
+            <input type="range" id="spdRange" min="0.05" max="0.6" step="0.05" value="0.3" disabled>
+            <p class="hint" style="margin:10px 0 0">Off keeps full quality. On trades ink in the
+              darkest areas for a faster plot.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4 · GENERATE -->
+      <section class="screen" data-screen="3">
+        <p class="eyebrow">Step 4 · Generate</p>
+        <h1>Your line art.</h1>
+        <p class="lede">One continuous stroke, rendered from your settings. The thin lines crossing
+          open areas are travel connectors, and you'll cut those next.</p>
+
+        <div class="result">
+          <div class="canvas-wrap"><img id="heroImg" alt="Hatched preview"></div>
+          <div class="metrics">
+            <div class="metric hero-metric"><span class="k">Est. plot time</span><span class="v" id="mTime">~3.1 h</span></div>
+            <div class="metric"><span class="k">Pen lifts</span><span class="v" id="mLifts">1</span></div>
+            <div class="metric"><span class="k">Draw length</span><span class="v" id="mDraw">216 m</span></div>
+            <div class="metric"><span class="k">Paths</span><span class="v" id="mPaths">1</span></div>
+            <button class="btn ghost" style="margin-top:12px;justify-content:center" id="regenBtn">Regenerate</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5 · REFINE (break tool) -->
+      <section class="screen" data-screen="4">
+        <p class="eyebrow">Step 5 · Refine</p>
+        <h1>Cut the travel connectors.</h1>
+        <p class="lede">Red lines are drawn on paper; they cross open space to keep one continuous
+          stroke. Click to cut one (turns green = pen lift). Drag to cut many. Scroll to zoom.</p>
+
+        <div class="break-top">
+          <div class="break-tools">
+            <div class="mini-range">
+              <span class="seg">min length</span>
+              <input type="range" id="minLen" min="4" max="120" step="1" value="26">
+              <span class="val" id="minLenVal" style="min-width:52px">26 px</span>
+            </div>
+            <button class="btn ghost" id="cutAll">Cut all shown</button>
+            <button class="btn link" id="clearCuts">Clear</button>
+          </div>
+          <div class="legend">
+            <span><i style="background:var(--keep)"></i>kept</span>
+            <span><i style="background:var(--cut)"></i>cut</span>
+            <span class="readout">pen lifts: <b id="liftCount" style="color:var(--ink)">1</b></span>
+          </div>
+        </div>
+        <canvas id="breakCanvas" width="960" height="560"></canvas>
+      </section>
+
+      <!-- 6 · EXPORT -->
+      <section class="screen" data-screen="5">
+        <p class="eyebrow">Step 6 · Export</p>
+        <h1>Ready to plot.</h1>
+        <p class="lede">Save a plotter-ready SVG. Load it in Cricut Design Space and draw with a
+          pen of your choice.</p>
+
+        <div class="card pad export-card">
+          <div class="summary">
+            <div><div class="k">Draw area</div><div class="v" id="xSize">12.0 × 8.0 in</div></div>
+            <div><div class="k">Est. plot time</div><div class="v" id="xTime">~2.4 h</div></div>
+            <div><div class="k">Pen lifts</div><div class="v" id="xLifts">38</div></div>
+            <div><div class="k">File</div><div class="v" id="xFile">sneaker_hatch.svg</div></div>
+          </div>
+          <button class="btn primary" id="exportBtn" style="width:100%;justify-content:center;margin-top:22px">
+            Export SVG</button>
+          <div class="done-badge" id="doneBadge" hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            <span id="doneMsg">Saved.</span>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <div class="footer-bar">
+    <div class="footer-inner">
+      <button class="btn link" id="backBtn" hidden>← Back</button>
+      <span style="flex:1"></span>
+      <span class="hint" id="footHint"></span>
+      <button class="btn primary" id="nextBtn">Continue →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── asset placeholders (injected by build_preview.py) ──────────────────── */
+const ASSETS = __ASSETS__;
+
+/* ── bridge: real pywebview API when embedded, demo data in the browser ─── */
+/* pywebview injects its API after load, so check at call time, not load time */
+const hasAPI = () => !!(window.pywebview && window.pywebview.api);
+
+const S = {           // app state
+  step:0, img:null, sizeIn:12, aspect:1.5, levels:0, speed:false, growth:0.30,
+  result:null, cuts:new Set(), shownConns:[], minLen:26,
+};
+
+/* ── navigation ─────────────────────────────────────────────────────────── */
+const screens=[...document.querySelectorAll('.screen')];
+const stepEls=[...document.querySelectorAll('.step')];
+const titles=['Choose a photo to begin','Set the output size','Tune for your image',
+  'Render your line art','Cut the travel connectors','Save your SVG'];
+const ctas=['Continue →','Continue →','Generate','Refine connectors →','Export →','Done'];
+
+function reached(){ return S.img ? (S.result ? 5 : 3) : 0; }  // furthest unlocked
+
+function go(n){
+  n=Math.max(0,Math.min(5,n));
+  if(n>0 && !S.img) return;
+  if(n>=4 && !S.result) return;
+  S.step=n;
+  screens.forEach(s=>s.classList.toggle('active',+s.dataset.screen===n));
+  stepEls.forEach((el,i)=>{
+    el.setAttribute('aria-current', i===n?'true':'false');
+    el.classList.toggle('done', i<n && i<=reached());
+    el.classList.toggle('locked', (i>0&&!S.img) || (i>=4&&!S.result));
+  });
+  document.getElementById('backBtn').hidden = n===0;
+  document.getElementById('nextBtn').textContent = ctas[n];
+  document.getElementById('footHint').textContent = titles[n];
+  const nb=document.getElementById('nextBtn');
+  nb.disabled = (n===0 && !S.img);
+  document.getElementById('stage').scrollTop=0;
+  if(n===4) drawBreak();
+}
+document.getElementById('nextBtn').onclick=()=>{
+  if(S.step===3 && !S.result){ return; }      // generate handled below
+  if(S.step===2){ generate(); return; }
+  if(S.step===5){ return; }
+  go(S.step+1);
+};
+document.getElementById('backBtn').onclick=()=>go(S.step-1);
+stepEls.forEach(el=>el.onclick=()=>go(+el.dataset.step));
+
+/* ── step 1 · import ────────────────────────────────────────────────────── */
+async function pickImage(){
+  let info;
+  if(hasAPI()){ info=await window.pywebview.api.pick_image(); if(!info) return; }
+  else { info={name:'texture_sneaker.jpg', px:'1200 × 798', thumb:ASSETS.source,
+    chars:['textured','mid-key','fine detail'],
+    note:'Lots of fine texture and a balanced tonal range, a strong candidate for crosshatching.',
+    aspect:1.5, reco:'This photo is textured and mid-key.'}; }
+  S.img=info; S.aspect=info.aspect||1.5;
+  document.getElementById('srcImg').src=info.thumb;
+  document.getElementById('fileName').textContent=info.name;
+  document.getElementById('filePx').textContent=info.px;
+  document.getElementById('chips').innerHTML=info.chars.map(c=>
+    `<span class="chip"><span class="k"></span>${c}</span>`).join('');
+  document.getElementById('readNote').textContent=info.note;
+  document.getElementById('dropzone').hidden=true;
+  document.getElementById('loaded').hidden=false;
+  document.getElementById('recoText').innerHTML=`<b>${info.reco}</b> Suggested: 8 darkness levels,
+    speed off (full detail). Turn speed on only if the plot time runs long.`;
+  updateSize(); go(0); document.getElementById('nextBtn').disabled=false;
+}
+document.getElementById('dropzone').onclick=pickImage;
+document.getElementById('dropzone').onkeydown=e=>{if(e.key==='Enter'||e.key===' ')pickImage();};
+
+/* ── step 2 · size ──────────────────────────────────────────────────────── */
+function updateSize(){
+  const s=S.sizeIn, a=S.aspect;
+  const long=s, short=+(s/a).toFixed(1);
+  document.getElementById('sizeVal').textContent=s.toFixed(1)+' in';
+  document.getElementById('sizeFinal').textContent=`${long.toFixed(1)} × ${short.toFixed(1)} in`;
+  document.getElementById('xSize').textContent=`${long.toFixed(1)} × ${short.toFixed(1)} in`;
+}
+document.getElementById('sizeRange').oninput=e=>{
+  S.sizeIn=+e.target.value;
+  document.querySelectorAll('.size-opt').forEach(o=>o.setAttribute('aria-pressed',
+    (+o.dataset.in===S.sizeIn)+''));
+  updateSize();
+};
+document.querySelectorAll('.size-opt').forEach(o=>o.onclick=()=>{
+  S.sizeIn=+o.dataset.in; document.getElementById('sizeRange').value=S.sizeIn;
+  document.querySelectorAll('.size-opt').forEach(x=>x.setAttribute('aria-pressed',(x===o)+''));
+  updateSize();
+});
+
+/* ── step 3 · tune ──────────────────────────────────────────────────────── */
+document.getElementById('lvlRange').oninput=e=>{
+  S.levels=+e.target.value;
+  document.getElementById('lvlVal').textContent=S.levels===0?'Auto':S.levels;
+};
+document.getElementById('speedChk').onchange=e=>{
+  S.speed=e.target.checked;
+  document.getElementById('spdRange').disabled=!S.speed;
+  document.getElementById('spdVal').textContent=S.speed?S.growth.toFixed(2):'off';
+};
+document.getElementById('spdRange').oninput=e=>{
+  S.growth=+e.target.value;
+  document.getElementById('spdVal').textContent=S.growth.toFixed(2);
+};
+
+/* ── step 4 · generate ──────────────────────────────────────────────────── */
+async function generate(){
+  const nb=document.getElementById('nextBtn'); nb.disabled=true; nb.textContent='Generating…';
+  let r;
+  if(hasAPI()){ r=await window.pywebview.api.generate({size_in:S.sizeIn,levels:S.levels,
+      growth:S.speed?S.growth:0});
+    if(r&&r.error){ nb.disabled=false; nb.textContent='Generate';
+      document.getElementById('footHint').textContent='Could not generate: '+r.error; return; }
+    S.imgW=r.img_w; S.imgH=r.img_h; }
+  else { await new Promise(res=>setTimeout(res,650));
+    S.imgW=960; S.imgH=640;
+    const t=S.speed?(3.1-S.growth*2.1):3.1, d=S.speed?(216-S.growth*150):216;
+    r={preview:ASSETS.hero, paths:1, lifts:1, draw_m:Math.round(d), est_hours:+t.toFixed(1),
+       img_w:960, img_h:640, connectors:demoConnectors()}; }
+  S.result=r; S.needFit=true;
+  document.getElementById('heroImg').src=r.preview;
+  document.getElementById('mTime').textContent='~'+r.est_hours+' h';
+  document.getElementById('mLifts').textContent=r.lifts;
+  document.getElementById('mDraw').textContent=r.draw_m+' m';
+  document.getElementById('mPaths').textContent=r.paths;
+  S.cuts=new Set();
+  nb.textContent='Refine connectors →';
+  go(3);
+}
+document.getElementById('regenBtn').onclick=()=>{ S.result=null; go(2); };
+
+/* ── step 5 · break tool (canvas) ───────────────────────────────────────── */
+/* Connectors live in IMAGE pixel space (0..imgW, 0..imgH); the faded art fills
+   the same rectangle, so a single scale+offset transform keeps them aligned. */
+const cv=document.getElementById('breakCanvas'), cx=cv.getContext('2d');
+const view={scale:1, ox:0, oy:0, fit:1};   // scale = screen px per image px
+let bg=new Image();
+function demoConnectors(){
+  const a=[], W=S.imgW, H=S.imgH;
+  for(let i=0;i<70;i++){ const x=.08*W+Math.random()*.84*W, y=.1*H+Math.random()*.8*H;
+    const ang=Math.random()*Math.PI, ln=6+Math.random()*22;
+    a.push({x1:x,y1:y,x2:x+Math.cos(ang)*ln,y2:y+Math.sin(ang)*ln}); }
+  for(let i=0;i<26;i++){ const x=.1*W+Math.random()*.8*W, y=.12*H+Math.random()*.76*H;
+    const ang=Math.random()*Math.PI, ln=55+Math.random()*180;
+    a.push({x1:x,y1:y,x2:x+Math.cos(ang)*ln,y2:y+Math.sin(ang)*ln}); }
+  return a.map((c,i)=>({...c,i,len:Math.hypot(c.x2-c.x1,c.y2-c.y1)}));
+}
+function conns(){ return (S.result&&S.result.connectors)||[]; }
+function shown(){ return conns().filter(c=>c.len>=S.minLen); }
+function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function segDist(px,py,ax,ay,bx,by){const vx=bx-ax,vy=by-ay,wx=px-ax,wy=py-ay;
+  const L=vx*vx+vy*vy, t=L?Math.max(0,Math.min(1,(wx*vx+wy*vy)/L)):0;
+  return Math.hypot(px-(ax+t*vx),py-(ay+t*vy));}
+
+function fitView(){
+  const r=cv.getBoundingClientRect(), cw=r.width, ch=560;
+  const s=Math.min(cw/S.imgW, ch/S.imgH);
+  view.fit=s; view.scale=s; view.ox=(cw-S.imgW*s)/2; view.oy=(ch-S.imgH*s)/2;
+}
+function drawBreak(){
+  if(!S.result) return;
+  if(bg.src!==S.result.preview){ bg=new Image();
+    bg.onload=()=>{ if(S.needFit){fitView();S.needFit=false;} drawBreak(); }; bg.src=S.result.preview; return; }
+  if(S.needFit){ fitView(); S.needFit=false; }
+  const dpr=window.devicePixelRatio||1, r=cv.getBoundingClientRect(), cw=r.width, ch=560;
+  cv.width=cw*dpr; cv.height=ch*dpr; cx.setTransform(dpr,0,0,dpr,0,0);
+  cx.clearRect(0,0,cw,ch);
+  const {scale:s,ox,oy}=view;
+  if(bg.complete && bg.naturalWidth){ cx.globalAlpha=.3;
+    cx.drawImage(bg, ox, oy, S.imgW*s, S.imgH*s); cx.globalAlpha=1; }
+  const keep=css('--keep'), cut=css('--cut');
+  shown().forEach(c=>{ const isCut=S.cuts.has(c.i);
+    cx.beginPath(); cx.moveTo(ox+c.x1*s, oy+c.y1*s); cx.lineTo(ox+c.x2*s, oy+c.y2*s);
+    cx.strokeStyle=isCut?cut:keep; cx.lineWidth=isCut?1.4:1.8;
+    cx.globalAlpha=isCut?.9:.85; cx.stroke(); });
+  cx.globalAlpha=1;
+  document.getElementById('liftCount').textContent=1+S.cuts.size;
+}
+function hit(mx,my){
+  const {scale:s,ox,oy}=view; let best=null,bd=10;
+  shown().forEach(c=>{ const d=segDist(mx,my, ox+c.x1*s,oy+c.y1*s, ox+c.x2*s,oy+c.y2*s);
+    if(d<bd){bd=d;best=c;} });
+  return best;
+}
+let painting=false,moved=false,panning=false,pan0=null;
+cv.addEventListener('pointerdown',e=>{
+  cv.setPointerCapture(e.pointerId);
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left,my=e.clientY-r.top;
+  if(e.button===1||e.shiftKey){panning=true;pan0=[mx-view.ox,my-view.oy];return;}
+  painting=true;moved=false;
+});
+cv.addEventListener('pointermove',e=>{
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left,my=e.clientY-r.top;
+  if(panning){view.ox=mx-pan0[0];view.oy=my-pan0[1];drawBreak();return;}
+  if(!painting)return; moved=true;
+  const c=hit(mx,my); if(c&&!S.cuts.has(c.i)){S.cuts.add(c.i);drawBreak();}
+});
+cv.addEventListener('pointerup',e=>{
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left,my=e.clientY-r.top;
+  if(panning){panning=false;return;}
+  painting=false;
+  if(!moved){ const c=hit(mx,my); if(c){ S.cuts.has(c.i)?S.cuts.delete(c.i):S.cuts.add(c.i); drawBreak(); } }
+});
+cv.addEventListener('wheel',e=>{e.preventDefault();
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left,my=e.clientY-r.top;
+  const f=e.deltaY<0?1.12:1/1.12, ns=Math.max(view.fit,Math.min(view.fit*8,view.scale*f)), k=ns/view.scale;
+  view.ox=mx-k*(mx-view.ox); view.oy=my-k*(my-view.oy); view.scale=ns; drawBreak();
+},{passive:false});
+document.getElementById('minLen').oninput=e=>{S.minLen=+e.target.value;
+  document.getElementById('minLenVal').textContent=S.minLen+' px'; drawBreak();};
+document.getElementById('cutAll').onclick=()=>{shown().forEach(c=>S.cuts.add(c.i));drawBreak();};
+document.getElementById('clearCuts').onclick=()=>{S.cuts.clear();drawBreak();};
+
+/* ── step 6 · export ────────────────────────────────────────────────────── */
+async function exportSvg(){
+  document.getElementById('xLifts').textContent=1+S.cuts.size;
+  let ok=true,where='Downloads';
+  if(hasAPI()){ const res=await window.pywebview.api.export(Array.from(S.cuts)); ok=!!res; where=res||''; }
+  const b=document.getElementById('doneBadge'); b.hidden=false;
+  document.getElementById('doneMsg').textContent = ok
+    ? (hasAPI()?`Saved to ${where}`:'Saved. (demo: wire to pipeline for a real file)') : 'Export cancelled.';
+}
+document.getElementById('exportBtn').onclick=exportSvg;
+// keep export summary live
+const obs=()=>{document.getElementById('xLifts').textContent=1+S.cuts.size;
+  if(S.result){document.getElementById('xTime').textContent='~'+S.result.est_hours+' h';}};
+['pointerup','input'].forEach(ev=>document.addEventListener(ev,obs));
+
+/* ── theme toggle ───────────────────────────────────────────────────────── */
+document.getElementById('themeBtn').onclick=()=>{
+  const cur=document.documentElement.getAttribute('data-theme')
+    || (matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');
+  document.documentElement.setAttribute('data-theme', cur==='dark'?'light':'dark');
+  if(S.step===4) drawBreak();
+};
+window.addEventListener('resize',()=>{if(S.step===4){S.needFit=true;drawBreak();}});
+
+/* init */
+updateSize(); go(0);
+</script>

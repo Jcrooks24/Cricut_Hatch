@@ -8,3 +8,4 @@ scipy            # cKDTree nearest-neighbour stitching
 
 # Interactive front-ends (batch cockpit + stitch-break tool)
 dearpygui
+pywebview
