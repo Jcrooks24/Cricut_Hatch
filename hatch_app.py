@@ -58,7 +58,8 @@ def build_cfg(size_in: float, growth: float, levels: int, detail_regions=None):
                         for r in detail_regions)
         cfg = replace(cfg, detail_regions=regions, tonal_adaptive_min_area=True,
                       tonal_min_area_flat=float(cfg.tonal_min_area_px2),
-                      tonal_min_area_detail=max(2.0, float(cfg.tonal_min_area_px2) * 0.2))
+                      tonal_min_area_detail=max(2.0, float(cfg.tonal_min_area_px2) * 0.1),
+                      tonal_detail_sharpen=0.5)
     return cfg
 
 

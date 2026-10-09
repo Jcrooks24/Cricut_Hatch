@@ -141,6 +141,10 @@ class HatchConfig:
     # normalised to the image (cx,r by width; cy by height). When present, they
     # OVERRIDE the auto detail map so only those areas get the fine min-area.
     detail_regions: tuple          = ()
+    # Unsharp-mask strength applied to the thresholding tone INSIDE the detail
+    # circles, for extra clarity (edges/fine tones separate into more layers).
+    # 0 = off. Only has effect when detail_regions is non-empty.
+    tonal_detail_sharpen: float    = 0.0
 
     # Tone-curve before thresholding. <1 lifts mid/light tones so they fall into
     # fewer layers (lighter overall) while pure blacks stay dark — keeps 10-layer
@@ -1039,6 +1043,16 @@ def run_tonal(png_path: str, arr: np.ndarray, cfg: HatchConfig,
             cx, cy, rr = cxn * Wc, cyn * Hc, max(2.0, rn * Wc)
             d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
             um = np.maximum(um, np.clip((1.25 * rr - d) / (0.25 * rr), 0.0, 1.0))
+        # local clarity: unsharp-mask the thresholding tone inside the circles so
+        # edges and fine tonal steps separate into more hatch layers. Blended by
+        # the feathered mask so the boundary stays smooth.
+        amt = float(cfg.tonal_detail_sharpen)
+        if amt > 0:
+            from scipy.ndimage import gaussian_filter as _gf
+            hi_s = np.clip(arr_s + amt * (arr_s - _gf(arr_s, 2.0)), 0.0, 1.0)
+            arr_s = arr_s * (1.0 - um) + hi_s * um
+            hi_c = np.clip(arr_clean + amt * (arr_clean - _gf(arr_clean, 2.0)), 0.0, 1.0)
+            arr_clean = arr_clean * (1.0 - um) + hi_c * um
         detail_map = um
     # ---------------------------------------------------------------------------
 

@@ -389,7 +389,7 @@
 
         <div class="break-top">
           <div class="break-tools">
-            <span class="seg">drag on the image to circle an area</span>
+            <span class="seg">drag to circle an area · drag a circle to move it</span>
             <button class="btn link" id="undoRegion">Undo</button>
             <button class="btn link" id="clearRegions">Clear</button>
           </div>
@@ -695,17 +695,30 @@ function drawDetail(preview){
   if(preview) circ(ox+preview.cx*s, oy+preview.cy*s, preview.r*s, false);   // preview in image px
   document.getElementById('regionCount').textContent=S.regions.length;
 }
-let dDrawing=false, dC0=null;
+let dMode=null, dC0=null, dIdx=-1, dGrab=null;
+function regionAt(px,py){ const NW=dimg.naturalWidth, NH=dimg.naturalHeight;   // image px -> region index
+  for(let i=S.regions.length-1;i>=0;i--){ const rg=S.regions[i];
+    if(Math.hypot(px-rg.cx*NW, py-rg.cy*NH) <= rg.r*NW) return i; }
+  return -1; }
 dcv.addEventListener('pointerdown',e=>{ dcv.setPointerCapture(e.pointerId);
-  const r=dcv.getBoundingClientRect(); dC0=dToImg(e.clientX-r.left, e.clientY-r.top); dDrawing=true; });
-dcv.addEventListener('pointermove',e=>{ if(!dDrawing) return;
   const r=dcv.getBoundingClientRect(), p=dToImg(e.clientX-r.left, e.clientY-r.top);
-  drawDetail({cx:dC0[0], cy:dC0[1], r:Math.hypot(p[0]-dC0[0], p[1]-dC0[1])}); });
-dcv.addEventListener('pointerup',e=>{ if(!dDrawing) return; dDrawing=false;
+  const NW=dimg.naturalWidth, NH=dimg.naturalHeight, idx=regionAt(p[0],p[1]);
+  if(idx>=0){ dMode='move'; dIdx=idx;                      // grab inside a circle -> move it
+    dGrab=[p[0]-S.regions[idx].cx*NW, p[1]-S.regions[idx].cy*NH]; }
+  else { dMode='draw'; dC0=p; } });
+dcv.addEventListener('pointermove',e=>{
   const r=dcv.getBoundingClientRect(), p=dToImg(e.clientX-r.left, e.clientY-r.top);
-  const rad=Math.hypot(p[0]-dC0[0], p[1]-dC0[1]), NW=dimg.naturalWidth, NH=dimg.naturalHeight;
-  if(rad*dView.scale>8){ S.regions.push({cx:dC0[0]/NW, cy:dC0[1]/NH, r:rad/NW}); invalidate(); }
-  drawDetail(); });
+  if(dMode==='move'){ const NW=dimg.naturalWidth, NH=dimg.naturalHeight;
+    S.regions[dIdx].cx=(p[0]-dGrab[0])/NW; S.regions[dIdx].cy=(p[1]-dGrab[1])/NH; drawDetail(); return; }
+  if(dMode==='draw'){ drawDetail({cx:dC0[0], cy:dC0[1], r:Math.hypot(p[0]-dC0[0], p[1]-dC0[1])}); return; }
+  dcv.style.cursor = regionAt(p[0],p[1])>=0 ? 'move' : 'crosshair'; });  // hover affordance
+dcv.addEventListener('pointerup',e=>{
+  const r=dcv.getBoundingClientRect(), p=dToImg(e.clientX-r.left, e.clientY-r.top);
+  if(dMode==='move'){ dMode=null; invalidate(); drawDetail(); return; }
+  if(dMode==='draw'){ dMode=null;
+    const rad=Math.hypot(p[0]-dC0[0], p[1]-dC0[1]), NW=dimg.naturalWidth, NH=dimg.naturalHeight;
+    if(rad*dView.scale>8){ S.regions.push({cx:dC0[0]/NW, cy:dC0[1]/NH, r:rad/NW}); invalidate(); }
+    drawDetail(); } });
 document.getElementById('undoRegion').onclick=()=>{ S.regions.pop(); invalidate(); drawDetail(); };
 document.getElementById('clearRegions').onclick=()=>{ S.regions=[]; invalidate(); drawDetail(); };
 
